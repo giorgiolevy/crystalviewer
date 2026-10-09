@@ -2,7 +2,8 @@
 <!--
   Generic Crystal Viewer
    ----------------------
-     
+
+  Version: 1.1
   Copyright (c) 2026 Giorgio Levy
   SPDX-License-Identifier: MIT
 
@@ -244,7 +245,8 @@ details summary:hover{color:var(--accent)}
 /* floating button stack, top-left of the 3D view: the three buttons flow
    in a column gap so the conditional "clear plane" collapses gracefully */
 #viewBtns{
-  position:absolute;top:16px;left:16px;display:flex;flex-direction:column;align-items:flex-start;gap:10px;
+  position:absolute;top:56px;left:16px;display:flex;flex-direction:column;align-items:flex-start;gap:10px;
+  z-index:20;
 }
 #viewBtns button{
   background:var(--panel);color:var(--fg2);border:1px solid var(--line);border-radius:20px;
@@ -281,10 +283,81 @@ details summary:hover{color:var(--accent)}
 .orbEntry .ov{font-size:10.5px;color:var(--fg3);min-width:40px;text-align:right;font-variant-numeric:tabular-nums}
 .orbEntry input[type=range]{width:58px;height:4px}
 #orbRow .onote{font-size:10.5px;color:var(--fg3);flex-basis:100%}
+
+/* ============================================================
+   v3 MOBILE LAYOUT  --  2D panel up front, 3D collapsible.
+   Desktop (>760px) is unchanged.  On phones the app becomes a
+   single-column stack: a compact top bar, the 2D plane panel as
+   the primary surface, and a collapsible 3D "Setup" section.
+   Every existing control and handler is preserved; only the
+   presentation changes.
+   ============================================================ */
+#mobBar{display:none}
+/* v3: 3D setup collapse header - available at ALL widths (desktop too) */
+#setupBox{display:block;padding:4px 10px 6px;position:relative;z-index:25}
+#setupBox .pbtn,#mbSetupInline{
+  min-height:30px;padding:5px 12px;border-radius:8px;font-size:12px;
+  border:1px solid var(--line);background:var(--panel);color:var(--fg2);cursor:pointer;
+}
+#setupBox .pbtn:hover,#mbSetupInline:hover{background:var(--btn-hover);color:var(--fg)}
+/* collapsed 3D: hide canvas + help; applies on desktop AND phones */
+#view.setupCollapsed #glc,#view.setupCollapsed #ovc,#view.setupCollapsed #help,#view.setupCollapsed #pickHint{display:none}
+#view.setupCollapsed{flex:none;min-height:0;height:auto}
+
+#pickOn3d{display:none}
+
+@media(max-width:760px){
+  /* one column, no half-screen sidebar */
+  #app{flex-direction:column;height:auto;min-height:100vh}
+  #side{
+    width:auto;max-height:none;border-right:none;border-bottom:1px solid var(--line);
+    order:2;   /* Settings sits between the 3D view and the 2D panel on phones */
+  }
+  /* the 2D panel becomes the primary, first surface */
+  #planewrap{
+    order:3;width:auto;max-width:none;min-width:0;
+    border-left:none;border-top:none;border-bottom:1px solid var(--line);
+    max-height:none;
+  }
+  #planewrap.hidden{display:none}
+  /* 3D viewport collapses into a compact, toggleable "Setup" box */
+  #view{order:1;flex:none;height:auto;min-height:0}
+  #view.setupCollapsed #glc,#view.setupCollapsed #ovc,#view.setupCollapsed #help,#view.setupCollapsed #pickHint{display:none}
+#view.setupCollapsed{flex:none;min-height:0;height:auto}
+  #setupBox{display:block;order:1}
+  /* tap-friendly bar + buttons */
+  #mobBar{
+    display:flex;gap:8px;align-items:center;position:sticky;top:0;z-index:40;
+    padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--line);
+  }
+  #mobBar button{
+    flex:1;min-height:40px;font-size:13px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel);color:var(--fg2);
+  }
+  #mobBar button.pri{background:var(--btn-hover);color:var(--fg);font-weight:700}
+  /* the "pick on 3D" affordance, shown by the 2D panel */
+  #pickOn3d{
+    display:inline-block;min-height:36px;padding:6px 14px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel);color:var(--fg2);font-size:12.5px;
+  }
+  #pickHint{font-size:12px}
+  #help{font-size:12px;padding:8px 10px}
+  /* bigger touch targets for the plane controls */
+  #planeBar .pbtn,#planeBar input{min-height:34px}
+}
+@media(max-width:400px){
+  #mobBar button{font-size:12px;padding:6px}
+  #planeBar{padding:8px}
+}
 </style>
 </head>
 <body>
 <div id="app">
+<div id="mobBar">
+ <button id="mbPlane" class="pri" title="Show the 2D plane-projection panel">2D panel</button>
+ <button id="mbSetup" title="Show or hide the 3D setup view">3D setup</button>
+ <button id="mbSide" title="Show or hide the settings sidebar">Settings</button>
+</div>
 <aside id="side">
  <div class="brand">
   <div class="glyph">&#9679;</div>
@@ -352,7 +425,8 @@ details summary:hover{color:var(--accent)}
  <canvas id="ovc"></canvas>
  <div id="pickHint">&#9679; Click an atom to anchor the slice plane</div>
  <div id="toast"></div>
- <div id="viewBtns">
+ <div id="setupBox"><button id="mbSetupInline" class="pbtn">&#9662; 3D view</button></div>
+<div id="viewBtns">
  <button id="panelToggle" title="Hide or show the 2D plane-projection panel">Hide 2D panel</button>
  <button id="planeClear" title="Clear the anchored (hkl) slice plane">&#10005; clear plane</button>
  <button id="sideToggle" title="Hide or show the left settings sidebar">Hide sidebar</button>
@@ -362,6 +436,8 @@ details summary:hover{color:var(--accent)}
 <section id="planewrap">
  <div id="planeBar">
   <span class="ptitle">Plane projection</span>
+  <button id="toggle3d" class="pbtn" title="Show or hide the 3D view">Hide 3D</button>
+  <button id="pickOn3d" title="Temporarily expand the 3D view to pick the anchor atom">Pick on 3D</button>
   <div class="pgroup">
    <label>hkl</label>
    <input id="ph" type="number" value="0" step="1" title="Miller index h">
@@ -1509,6 +1585,7 @@ var PLANE={
   onTol:0.05,         // Å; retired - selection now uses HILITE_WINDOW_A, kept for compatibility
   origin:[0,0,0],
   repRange:null,      // {A,B,C,cellsA,cellsB,cellsC,requested,floored} - shown in the 2D panel
+  netWarn:null,       // v2: non-empty string => why the 2D net is unavailable
   scale:1, panx:0, pany:0,
   fit:true
 };
@@ -2123,6 +2200,11 @@ function resize(){
      resize, a sidebar/panel toggle, or a DPR change - all of which call
      markCanvasResize() - so we skip the read on steady-state frames.         */
   if(!_glcNeedMeasure) return;
+  if(glc.clientWidth===0 || glc.clientHeight===0){
+    /* hidden (e.g. 3D view collapsed): keep the last good size, and defer the
+       re-measure until it is visible again.  Prevents a 1x1 canvas.          */
+    _glcNeedMeasure=true; return;
+  }
   var vw=Math.max(1,glc.clientWidth), vh=Math.max(1,glc.clientHeight);
   cssW=vw; cssH=vh;
   var w=Math.floor(vw*dpr), h=Math.floor(vh*dpr);
@@ -2628,6 +2710,57 @@ function resizePlaneCanvas(){
     plc.width=pcW; plc.height=pcH; pctx.setTransform(dpr,0,0,dpr,0,0);
   }
 }
+/* v2 PATCH -- CLOSED-FORM PLANE NET (O(1); replaces the bounded integer search).
+   A lattice translation t=(a,b,c) lies in the plane iff h*a+k*b+l*c = 0
+   exactly (the old |t.n| <= 1e-4*|t| test was its floating-point shadow).
+   The full integer solution lattice of that equation is generated by:
+     d = gcd(h,k) with Bezout p*h+q*k = d ;  G = gcd(d,l) ; lp = l/G ; dpp = d/G
+     t1 = ( k/d, -h/d, 0 )          t2 = ( -lp*p, -lp*q, dpp )
+   (h,t1a+k*t1b+l*t1c = 0 and h*t2a+k*t2b+l*t2c = -(l/G)d + l(d/G) = 0.
+    Completeness: c must be a multiple of dpp, then (a,b) = -lp*m*(p,q) + j*(k/d,-h/d),
+    so <t1,t2> spans ALL solutions.  Special cases: (0,0,0) -> null;
+    h==k==0 (plane || a,b) -> the a and b axes.)
+   The projected pair is then Gauss-reduced to the two shortest independent
+   net vectors, matching the old search's intended semantics at ANY index. */
+function egcdAB(a,b){
+  /* extended gcd, non-negative ints: [g,p,q] with p*a+q*b = g */
+  var s0=a,s1=b, t0=1,t1=0, u0=0,u1=1;
+  while(s1>0){ var m=Math.floor(s0/s1); var t2v=s0-m*s1; s0=s1; s1=t2v;
+    var t2t=t0-m*t1; t0=t1; t1=t2t; var t2u=u0-m*u1; u0=u1; u1=t2u; }
+  return [s0,t0,u0];
+}
+function projNetBasis(h,k,l){
+  h=Math.round(h||0); k=Math.round(k||0); l=Math.round(l||0);
+  if(!isFinite(h)||!isFinite(k)||!isFinite(l)) return null;
+  if(h===0&&k===0&&l===0) return null;              /* no plane at all */
+  var g=gcd(gcd(Math.abs(h),Math.abs(k)),Math.abs(l))||1;
+  if(g>1){ h/=g; k/=g; l/=g; }                       /* same equation  */
+  if(h===0&&k===0) return [[1,0,0],[0,1,0]];        /* plane || (a,b) */
+  var eg=egcdAB(Math.abs(h),Math.abs(k));           /* d,p,q: p|h|+q|k|=d */
+  var d=eg[0];
+  var p=eg[1]*(h<0?-1:1), q=eg[2]*(k<0?-1:1);       /* p*h+q*k=d, signed */
+  var G=gcd(d,Math.abs(l))||1;
+  var t1=[k/d,-h/d,0];
+  var t2=[-(l/G)*p,-(l/G)*q,d/G];
+  return [t1,t2];
+}
+/* Gauss reduction of a 2-D basis: repeat 'shorten b by the nearest multiple
+   of a' until reduced; preserves the net lattice (integer combinations). */
+function gaussReduce2(p,q){
+  var a=[p[0],p[1]], b=[q[0],q[1]];
+  for(var it=0; it<80; it++){
+    var na=a[0]*a[0]+a[1]*a[1];
+    var nb=b[0]*b[0]+b[1]*b[1];
+    if(nb<na){ var tm=a; a=b; b=tm; na=nb; }   /* a=shorter; na MUST track swap */
+    var dot=a[0]*b[0]+a[1]*b[1];
+    var m=Math.round(dot/na);
+    if(!m) break;
+    b=[b[0]-m*a[0], b[1]-m*a[1]];
+  }
+  var fa=a[0]*a[0]+a[1]*a[1], fb=b[0]*b[0]+b[1]*b[1];
+  return fa<=fb ? [a,b] : [b,a];
+}
+
 function netBasis2D(){
   /* Memoised: the net depends only on the cell and the plane basis
      (PLANE.u/v/n), never on pan/zoom.  A drag/zoom redraws renderPlane2D many
@@ -2641,75 +2774,36 @@ function netBasis2D(){
   if(_cb.res && _cb.cell===_cell && _cb.u===_u && _cb.v===_v && _cb.n===_n){
     return _cb.res;
   }
-  /* Two-dimensional lattice (net) of the plane cut.
-     A vector is a genuine 2-D repeat of the plane ONLY if it is a lattice
-     translation that lies IN the plane, i.e. an integer combination
-         t = n1*A1 + n2*A2 + n3*A3        with   t . n = 0
-     Simply projecting a single cell vector onto the plane is NOT valid: a
-     vector that sticks out of the plane leaves a "shadow" whose length is
-     not a period of the plane at all.  (For YBa2Cu4O8 (1,0,1) the a-axis is
-     tilted out of the plane and its shadow is 0.536 A - a fictitious repeat.)
-     So we enumerate integer combinations, keep only the truly in-plane ones,
-     and take the two shortest independent vectors of that set.            */
-  var A=S.struct.cell, u=PLANE.u, v=PLANE.v, n=PLANE.n;
-  var ext=[];
-  var R=3;                                  /* search range in units of a,b,c */
-  for(var a=-R;a<=R;a++) for(var b=-R;b<=R;b++) for(var c=-R;c<=R;c++){
-    if(a===0&&b===0&&c===0) continue;
-    /* the candidate lattice translation t = a*A1 + b*A2 + c*A3 */
-    var tx=a*A[0][0]+b*A[1][0]+c*A[2][0];
-    var ty=a*A[0][1]+b*A[1][1]+c*A[2][1];
-    var tz=a*A[0][2]+b*A[1][2]+c*A[2][2];
-    /* must lie IN the plane: zero component along the normal */
-    var dn=tx*n[0]+ty*n[1]+tz*n[2];
-    var tlen=Math.sqrt(tx*tx+ty*ty+tz*tz);
-    if(tlen<1e-9) continue;
-    if(Math.abs(dn) > 1e-4*tlen) continue;  /* tilted out of the plane  */
-    /* its in-plane coordinates */
-    var x=tx*u[0]+ty*u[1]+tz*u[2];
-    var y=tx*v[0]+ty*v[1]+tz*v[2];
-    if(Math.abs(x)<1e-6 && Math.abs(y)<1e-6) continue;
-    ext.push([x,y]);
+  /* v2: closed form - see projNetBasis above.  The (x,y) coordinates are
+     taken against the CURRENT (u,v) basis, so in-plane rotation still turns
+     the net together with the atoms.  On failure PLANE.netWarn carries a
+     human-readable reason for the canvas + info bar to display.          */
+  var T=projNetBasis(PLANE.h,PLANE.k,PLANE.l);
+  if(!T){
+    PLANE.netWarn='hkl = ('+(PLANE.h||0)+','+(PLANE.k||0)+','+(PLANE.l||0)+') does not define a lattice plane';
+    _netBasisCache={res:[null,null], cell:_cell, u:_u, v:_v, n:_n};
+    return [null,null];
   }
-  /* pick the two shortest independent vectors */
-  ext.sort(function(p,q){ return (p[0]*p[0]+p[1]*p[1])-(q[0]*q[0]+q[1]*q[1]); });
-  var g1=null,g2=null;
-  for(var i2=0;i2<ext.length;i2++){
-    var p=ext[i2], L=hypot2(p[0],p[1]);
-    if(L<1e-4) continue;
-    if(!g1){ g1=p; continue; }
-    var cr=g1[0]*p[1]-g1[1]*p[0];
-    if(Math.abs(cr) > 1e-3*L*hypot2(g1[0],g1[1])){ g2=p; break; }
+  PLANE.netWarn=null;
+  var A=S.struct.cell, u=PLANE.u, v=PLANE.v;
+  var P=[];
+  for(var ti=0; ti<2; ti++){
+    var t=T[ti];
+    var cx=t[0]*A[0][0]+t[1]*A[1][0]+t[2]*A[2][0];
+    var cy=t[0]*A[0][1]+t[1]*A[1][1]+t[2]*A[2][1];
+    var cz=t[0]*A[0][2]+t[1]*A[1][2]+t[2]*A[2][2];
+    P.push([cx*u[0]+cy*u[1]+cz*u[2], cx*v[0]+cy*v[1]+cz*v[2]]);
   }
-  /* fallback: if no in-plane combination was found within the search range
-     (extremely oblique cell), widen the search once before giving up.      */
-  if(!g1 || !g2){
-    var R2=6;
-    var ext2=[];
-    for(var a2=-R2;a2<=R2;a2++) for(var b2=-R2;b2<=R2;b2++) for(var c2=-R2;c2<=R2;c2++){
-      if(a2===0&&b2===0&&c2===0) continue;
-      var sx=a2*A[0][0]+b2*A[1][0]+c2*A[2][0];
-      var sy=a2*A[0][1]+b2*A[1][1]+c2*A[2][1];
-      var sz=a2*A[0][2]+b2*A[1][2]+c2*A[2][2];
-      var sd=sx*n[0]+sy*n[1]+sz*n[2];
-      var sl=Math.sqrt(sx*sx+sy*sy+sz*sz);
-      if(sl<1e-9) continue;
-      if(Math.abs(sd) > 1e-4*sl) continue;
-      var qx=sx*u[0]+sy*u[1]+sz*u[2];
-      var qy=sx*v[0]+sy*v[1]+sz*v[2];
-      if(Math.abs(qx)<1e-6 && Math.abs(qy)<1e-6) continue;
-      ext2.push([qx,qy]);
-    }
-    ext2.sort(function(p,q){ return (p[0]*p[0]+p[1]*p[1])-(q[0]*q[0]+q[1]*q[1]); });
-    for(var i3=0;i3<ext2.length && (!g1||!g2);i3++){
-      var q=ext2[i3], L2=hypot2(q[0],q[1]);
-      if(L2<1e-4) continue;
-      if(!g1){ g1=q; continue; }
-      var cr2=g1[0]*q[1]-g1[1]*q[0];
-      if(Math.abs(cr2) > 1e-3*L2*hypot2(g1[0],g1[1])){ g2=q; break; }
-    }
+  /* fp safety: the generators are independent by construction, so a
+     vanishing cross product here can only be numerical noise.      */
+  var crx=P[0][0]*P[1][1]-P[0][1]*P[1][0];
+  if(Math.abs(crx) < 1e-9*(hypot2(P[0][0],P[0][1])*hypot2(P[1][0],P[1][1])+1e-30)){
+    PLANE.netWarn='2D net degenerate for this (h,k,l) - cannot draw lattice';
+    _netBasisCache={res:[null,null], cell:_cell, u:_u, v:_v, n:_n};
+    return [null,null];
   }
-  var _res=[g1,g2];
+  var _res=gaussReduce2(P[0],P[1]);
+
   _netBasisCache={res:_res, cell:_cell, u:_u, v:_v, n:_n};
   return _res;
 }
@@ -3797,6 +3891,13 @@ function renderPlane2D(){
     pctx.globalAlpha=1;
   }
 
+  /* ---- v2: say WHY there is no net instead of a silent blank ---- */
+  if(PLANE.on && PLANE.anchor && (!nb || !nb[0] || !nb[1])){
+    pctx.save();
+    haloLbl(PLANE.netWarn||'2D lattice net unavailable for this (h,k,l)', W/2, H/2+34, (theme==='dark')?'#e2a03c':'#b45309');
+    pctx.restore();
+  }
+
   /* ---- orbital overlay: drawn over the atoms, before the value labels ---- */
   drawOrbitals2D(TX,TY,scale,W,H);
 
@@ -4137,6 +4238,9 @@ function updatePlanePanel(){
     var cg2=(nb2[0][0]*nb2[1][0]+nb2[0][1]*nb2[1][1])/((la||1e-9)*(lb||1e-9));
     var gam2=Math.acos(Math.max(-1,Math.min(1,cg2)))*180/Math.PI;
     msg+='<br>2D unit cell: a\u2081 = '+la.toFixed(3)+' \u00C5 &nbsp;\u00B7&nbsp; a\u2082 = '+lb.toFixed(3)+' \u00C5 &nbsp;\u00B7&nbsp; \u03B3 = '+gam2.toFixed(1)+'\u00B0';
+  }
+  else if(PLANE.on && PLANE.anchor){
+    msg+='<br><span style="color:#b45309">2D unit cell: unavailable \u2014 '+(PLANE.netWarn||'no net for this (h,k,l)')+'</span>';
   }
   info.innerHTML=msg;
   if(typeof buildOrbitalControls==='function') buildOrbitalControls();
@@ -4734,6 +4838,124 @@ function initUI(){
       markPlaneCanvasResize();
     });
     updateSideToggleLabel();
+
+/* ============================================================
+   v3 MOBILE HELPERS -- top-bar toggles, 3D setup collapse, and
+   the "Pick on 3D" expand-to-anchor flow.  Purely additive: all
+   existing controls, ids, and handlers are untouched.
+   ============================================================ */
+(function(){
+  var mob = (window.matchMedia && window.matchMedia('(max-width:760px)').matches);
+  function $id(x){ return document.getElementById(x); }
+  var view = $id('view');
+  var pw   = $id('planewrap');
+  var side = $id('side');
+
+  /* ---- 3D setup box collapse / expand (phones only) ---- */
+  function setSetup(collapsed){
+    if(!view) return;
+    view.classList.toggle('setupCollapsed', !!collapsed);
+    var b = $id('mbSetup');
+    if(b) b.textContent = collapsed ? '3D setup' : 'Hide 3D';
+    var bi = $id('mbSetupInline');
+    if(bi) bi.innerHTML = (collapsed ? '\u25B8 3D view' : '\u25BE 3D view');
+    var t3 = $id('toggle3d');
+    if(t3) t3.textContent = collapsed ? 'Show 3D' : 'Hide 3D';
+    /* canvas + 2D panel must re-fit to the new box size */
+    if(typeof markCanvasResize === 'function') markCanvasResize();
+    if(typeof renderPlane2D === 'function') renderPlane2D();
+    /* The canvases are display:none while collapsed, so glc.clientWidth is 0.
+       On EXPAND we must re-measure only AFTER the browser has laid the now
+       visible canvas out, otherwise resize() clamps to a tiny size and the GL
+       viewport stays wrong (blue 3D view).  Force a measure on the next frame,
+       then a second one shortly after (some browsers need two passes /
+       a transition to finish), and always wake the render loop.            */
+    function _refitGL(){
+      if(typeof markCanvasResize === 'function') markCanvasResize();
+      /* wake the render loop via the app's own mutator (markDirty sets
+         needsRedraw/dirtyHold in its correct scope - a bare assignment here
+         would not reach it, since this IIFE is a different scope).          */
+      if(typeof markDirty === 'function') markDirty();
+      if(typeof renderPlane2D === 'function') renderPlane2D();
+    }
+    if(!collapsed){
+      /* expanding: wait for layout, then re-measure twice */
+      if(typeof requestAnimationFrame === 'function'){
+        requestAnimationFrame(function(){ _refitGL(); requestAnimationFrame(_refitGL); });
+      } else { setTimeout(_refitGL, 0); }
+      setTimeout(_refitGL, 120);
+    } else {
+      /* collapsing: nothing to measure, just refresh the 2D panel */
+      if(typeof renderPlane2D === 'function') renderPlane2D();
+    }
+  }
+  var mbSetup = $id('mbSetup');
+  if(mbSetup) mbSetup.addEventListener('click', function(){
+    setSetup(!view.classList.contains('setupCollapsed'));
+  });
+  var mbSetupInline = $id('mbSetupInline');
+  if(mbSetupInline) mbSetupInline.addEventListener('click', function(){
+    setSetup(!view.classList.contains('setupCollapsed'));
+  });
+
+  /* ---- #planeBar "Show 3D / Hide 3D" button: same collapse path ---- */
+  var toggle3d = $id('toggle3d');
+  if(toggle3d) toggle3d.addEventListener('click', function(){
+    setSetup(!view.classList.contains('setupCollapsed'));
+  });
+
+  /* ---- top-bar panel toggles mirror the existing state flags ---- */
+  var mbPlane = $id('mbPlane');
+  if(mbPlane) mbPlane.addEventListener('click', function(){
+    if(typeof S!=='undefined'){ S.panel2d = !S.panel2d; }
+    if(typeof setPanel2dVisibility==='function') setPanel2dVisibility();
+    else if(pw) pw.classList.toggle('hidden');
+    var c = $id('chkPanel'); if(c) c.checked = !!(typeof S!=='undefined' && S.panel2d);
+    /* v3: on phones the 2D panel sits at the bottom of the stack, so after
+       showing it, bring it into view. */
+    if(pw && !pw.classList.contains('hidden')){
+      if(typeof requestAnimationFrame==='function')
+        requestAnimationFrame(function(){ try{ pw.scrollIntoView({behavior:'smooth', block:'start'}); }catch(e){} });
+      else try{ pw.scrollIntoView(); }catch(e){}
+    }
+  });
+  var mbSide = $id('mbSide');
+  if(mbSide) mbSide.addEventListener('click', function(){
+    if(side) side.classList.toggle('hidden');
+    if(typeof updateSideToggleLabel==='function') updateSideToggleLabel();
+  });
+
+  /* ---- "Pick on 3D": expand the 3D view, arm the anchor hint,
+        and auto-collapse again once the user picks an atom. ---- */
+  var pickBtn = $id('pickOn3d');
+  var _armed = false;
+  function armPick(){
+    _armed = true;
+    setSetup(false);                 /* make sure 3D is visible */
+    var h=$id('pickHint'); if(h) h.classList.remove('gone');
+    try{ if(view) view.scrollIntoView({behavior:'smooth', block:'nearest'}); }catch(e){}
+  }
+  if(pickBtn) pickBtn.addEventListener('click', armPick);
+  /* collapse 3D again after a successful anchor (PLANE.anchor becomes non-null).
+     We watch cheaply on the existing canvas click path via a short poll. */
+  var _poll = setInterval(function(){
+    if(!_armed) return;
+    if(typeof PLANE!=='undefined' && PLANE && PLANE.anchor){
+      _armed = false;
+      if(mob) setSetup(true);
+    }
+  }, 250);
+
+  /* ---- phones start with the 3D view EXPANDED (3D-first), so the user
+         sees the structure and can pick the anchor immediately; the 2D
+         panel sits directly beneath.  Desktop is untouched.              ---- */
+  if(mob) setSetup(false);
+  /* keep the #planeBar toggle label correct on first paint too */
+  (function(){ var t3=$id('toggle3d');
+    if(t3) t3.textContent = view.classList.contains('setupCollapsed') ? 'Show 3D' : 'Hide 3D'; })();
+  /* ensure the first paint is fitted whether or not the layout above ran */
+  if(typeof markCanvasResize === 'function') markCanvasResize();
+})();
   }
 
   /* pan / zoom the 2D panel */
