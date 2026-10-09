@@ -2,7 +2,7 @@
 <!--
   Generic Crystal Viewer
    ----------------------
-
+     
   Version: 1.1
   Copyright (c) 2026 Giorgio Levy
   SPDX-License-Identifier: MIT
@@ -198,19 +198,22 @@ details summary:hover{color:var(--accent)}
 ::-webkit-scrollbar-thumb{background:var(--btn-line);border-radius:6px;border:2px solid var(--panel)}
 ::-webkit-scrollbar-track{background:transparent}
 
-@media(max-width:760px){
-  #app{flex-direction:column}
-  #side{width:auto;max-height:47%;border-right:none;border-bottom:1px solid var(--line)}
-  .brand{position:static}
-}
+/* (phone rules consolidated into the single @media(max-width:760px) block at end of stylesheet) */
 
 /* ---------- 2D plane panel ---------- */
 #planewrap{
-  position:relative;width:46%;min-width:330px;max-width:56%;
+  position:relative;height:100%;max-height:100%;width:46%;min-width:330px;max-width:56%;
+  overflow:hidden;   /* v5c: contain the canvas so its box == panel box */
   display:flex;flex-direction:column;background:var(--panel);
   border-left:1px solid var(--line);transition:background .25s,border-color .25s;
 }
 #planewrap.hidden{display:none}
+/* desktop: when the 3D view is collapsed, the 2D panel fills the space */
+#app.setup3dCollapsed #planewrap{
+  width:auto;min-width:0;flex:1 1 64%;max-width:none;max-height:none;
+  height:100%;align-self:stretch;
+}
+
 #planeBar{
   display:flex;flex-wrap:wrap;align-items:center;gap:9px 14px;
   padding:10px 13px;border-bottom:1px solid var(--line2);background:var(--panel);
@@ -229,7 +232,7 @@ details summary:hover{color:var(--accent)}
   padding:4px 8px;font-size:11.5px;cursor:pointer;transition:background .16s,transform .12s;
 }
 .pbtn:hover{background:var(--btn-hover);transform:translateY(-1px)}
-#plc{flex:1;width:100%;display:block;min-height:0;cursor:grab}
+#plc{flex:1 1 auto;width:100%;min-height:0;display:block;cursor:grab}
 #plc:active{cursor:grabbing}
 #planeInfo{
   font-size:11.5px;color:var(--fg2);padding:8px 13px;border-top:1px solid var(--line2);
@@ -292,7 +295,6 @@ details summary:hover{color:var(--accent)}
    Every existing control and handler is preserved; only the
    presentation changes.
    ============================================================ */
-#mobBar{display:none}
 /* v3: 3D setup collapse header - available at ALL widths (desktop too) */
 #setupBox{display:block;padding:4px 10px 6px;position:relative;z-index:25}
 #setupBox .pbtn,#mbSetupInline{
@@ -304,60 +306,59 @@ details summary:hover{color:var(--accent)}
 #view.setupCollapsed #glc,#view.setupCollapsed #ovc,#view.setupCollapsed #help,#view.setupCollapsed #pickHint{display:none}
 #view.setupCollapsed{flex:none;min-height:0;height:auto}
 
-#pickOn3d{display:none}
 
 @media(max-width:760px){
-  /* one column, no half-screen sidebar */
+  /* ============================================================
+     v4 PHONE LAYOUT -- floating buttons only, no top bar.
+     Vertical stack: 3D view, 2D panel, Settings.  The settings
+     sidebar starts COLLAPSED (user lands on the 3D view).  When
+     the 3D view is hidden, the 2D panel grows to fill the space.
+     ============================================================ */
   #app{flex-direction:column;height:auto;min-height:100vh}
-  #side{
-    width:auto;max-height:none;border-right:none;border-bottom:1px solid var(--line);
-    order:2;   /* Settings sits between the 3D view and the 2D panel on phones */
-  }
-  /* the 2D panel becomes the primary, first surface */
+  .brand{position:static}
+
+  /* --- 3D view: first pane, collapsible via #setupBox / #toggle3d --- */
+  #view{order:1;flex:0 0 auto;min-height:42vh}
+  #view.setupCollapsed #glc,
+  #view.setupCollapsed #ovc,
+  #view.setupCollapsed #help,
+  #view.setupCollapsed #pickHint{display:none}
+  #view.setupCollapsed{min-height:0;height:auto;flex:0 0 auto}
+
+  /* --- 2D panel: second pane; fills leftover height when shown --- */
   #planewrap{
-    order:3;width:auto;max-width:none;min-width:0;
-    border-left:none;border-top:none;border-bottom:1px solid var(--line);
-    max-height:none;
+    order:2;width:100%;max-width:none;min-width:0;
+    border-left:none;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    max-height:none;flex:1 1 auto;
+    display:flex;flex-direction:column;
   }
   #planewrap.hidden{display:none}
-  /* 3D viewport collapses into a compact, toggleable "Setup" box */
-  #view{order:1;flex:none;height:auto;min-height:0}
-  #view.setupCollapsed #glc,#view.setupCollapsed #ovc,#view.setupCollapsed #help,#view.setupCollapsed #pickHint{display:none}
-#view.setupCollapsed{flex:none;min-height:0;height:auto}
-  #setupBox{display:block;order:1}
-  /* tap-friendly bar + buttons */
-  #mobBar{
-    display:flex;gap:8px;align-items:center;position:sticky;top:0;z-index:40;
-    padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--line);
+  #plc{width:100%}
+
+  /* --- Settings sidebar: LAST, reachable only via the floating button --- */
+  #side{
+    order:3;width:100%;max-height:none;min-width:0;
+    border-right:none;border-bottom:1px solid var(--line);
   }
-  #mobBar button{
-    flex:1;min-height:40px;font-size:13px;border-radius:10px;
-    border:1px solid var(--line);background:var(--panel);color:var(--fg2);
-  }
-  #mobBar button.pri{background:var(--btn-hover);color:var(--fg);font-weight:700}
-  /* the "pick on 3D" affordance, shown by the 2D panel */
-  #pickOn3d{
-    display:inline-block;min-height:36px;padding:6px 14px;border-radius:10px;
-    border:1px solid var(--line);background:var(--panel);color:var(--fg2);font-size:12.5px;
-  }
+  #side.hidden{display:none}
+
+  #viewBtns{top:52px;left:12px;z-index:30}
+  #viewBtns button{min-height:34px;font-size:12.5px}
+  #setupBox{order:1;padding:4px 10px 6px}
+
   #pickHint{font-size:12px}
   #help{font-size:12px;padding:8px 10px}
-  /* bigger touch targets for the plane controls */
+  #planeBar{padding:8px 10px}
   #planeBar .pbtn,#planeBar input{min-height:34px}
 }
+
 @media(max-width:400px){
-  #mobBar button{font-size:12px;padding:6px}
   #planeBar{padding:8px}
 }
 </style>
 </head>
 <body>
 <div id="app">
-<div id="mobBar">
- <button id="mbPlane" class="pri" title="Show the 2D plane-projection panel">2D panel</button>
- <button id="mbSetup" title="Show or hide the 3D setup view">3D setup</button>
- <button id="mbSide" title="Show or hide the settings sidebar">Settings</button>
-</div>
 <aside id="side">
  <div class="brand">
   <div class="glyph">&#9679;</div>
@@ -437,7 +438,6 @@ details summary:hover{color:var(--accent)}
  <div id="planeBar">
   <span class="ptitle">Plane projection</span>
   <button id="toggle3d" class="pbtn" title="Show or hide the 3D view">Hide 3D</button>
-  <button id="pickOn3d" title="Temporarily expand the 3D view to pick the anchor atom">Pick on 3D</button>
   <div class="pgroup">
    <label>hkl</label>
    <input id="ph" type="number" value="0" step="1" title="Miller index h">
@@ -2691,6 +2691,46 @@ var planeView={scale:1, ox:0, oy:0, fit:true, dragging:false, lx:0, ly:0};
 
 var _plcNeedMeasure=true;    /* force a getBoundingClientRect() the next call */
 function markPlaneCanvasResize(){ _plcNeedMeasure=true; }
+/* v5: re-measure BOTH canvases and redraw the 2D panel AFTER the browser has
+   re-laid-out.  Used by every layout change that alters a panel's size while
+   the 2D panel is visible (sidebar toggle, 3D collapse/expand, 2D show/hide).
+   Doing the measure on the next animation frame (plus once more shortly after,
+   for transitions/slow layouts) avoids reading stale dimensions, which is what
+   left the 2D canvas deformed until the window was resized.                  */
+function refitPanelsSoon(){
+  /* Resize BOTH canvases directly, then repaint.  For the 2D canvas we call
+     resizePlaneCanvasNow() first (unconditional measure+write) and only then
+     ask renderPlane2D() to repaint, so a render guard can no longer leave a
+     stale canvas behind. */
+  function once(){
+    if(typeof markCanvasResize==='function') markCanvasResize();
+    if(typeof resizePlaneCanvasNow==='function') resizePlaneCanvasNow();
+    if(typeof markPlaneCanvasResize==='function') markPlaneCanvasResize();
+    if(typeof markDirty==='function') markDirty();
+    if(typeof renderPlane2D==='function') renderPlane2D();
+  }
+  if(typeof requestAnimationFrame==='function') requestAnimationFrame(once);
+  setTimeout(once, 50);
+  setTimeout(once, 180);
+  setTimeout(once, 400);
+}
+
+/* v5b: DIRECT 2D-canvas resize.  Measures #plc and writes the backing store
+   UNCONDITIONALLY - it does not consult the render path, the _plcNeedMeasure
+   flag, or panel2dVisible().  This is what fixes the deformed 2D canvas after
+   hiding the 3D view / sidebar: those changes alter #plc's box, and the cached
+   pcW/pcH must be rewritten from a fresh measurement even if the value looks
+   unchanged or the panel is momentarily considered hidden.                    */
+function resizePlaneCanvasNow(){
+  if(!plc) return;
+  if(plc.offsetWidth===0 || plc.offsetHeight===0) return;   /* not laid out yet */
+  var r=plc.getBoundingClientRect();
+  var w=Math.max(1,Math.floor(r.width*dpr)), h=Math.max(1,Math.floor(r.height*dpr));
+  pcW=w; pcH=h;
+  plc.width=w; plc.height=h;
+  if(pctx && pctx.setTransform) pctx.setTransform(dpr,0,0,dpr,0,0);
+  _plcNeedMeasure=false;
+}
 function resizePlaneCanvas(){
   if(!plc) return;
   /* getBoundingClientRect() forces a synchronous layout.  renderPlane2D runs on
@@ -4653,6 +4693,11 @@ function initUI(){
     else if(PLANE.on && PLANE.anchor){ pw.classList.remove('hidden'); renderPlane2D(); }
     else if(S.struct){ pw.classList.remove('hidden'); renderPlane2D(); } /* empty state: "click an atom" hint */
     updatePanelToggleLabel();
+    /* v5b: measure+write the 2D canvas directly once it is visible, then
+       repaint, so a display:none -> shown transition cannot leave a stale box. */
+    if(typeof resizePlaneCanvasNow==='function') resizePlaneCanvasNow();
+    if(typeof renderPlane2D==='function') renderPlane2D();
+    if(typeof refitPanelsSoon==='function') refitPanelsSoon();
   }
   /* updatePanelToggleLabel() is defined at top level so every code path
      (anchor, clear, toggle, sidebar checkbox) can keep the label in sync. */
@@ -4829,20 +4874,28 @@ function initUI(){
   if(stog){
     var sideEl=$('side');
     try{ if(localStorage.getItem('crystal-viewer-sidebar')==='hidden' && sideEl) sideEl.classList.add('hidden'); }catch(e){}
+    /* v4: on phones the sidebar starts COLLAPSED so the user lands on the 3D view */
+    try{ if(window.matchMedia && window.matchMedia('(max-width:760px)').matches && sideEl) sideEl.classList.add('hidden'); }catch(e){}
     stog.addEventListener('click',function(){
       if(sideEl) sideEl.classList.toggle('hidden');
       try{ localStorage.setItem('crystal-viewer-sidebar',(sideEl&&sideEl.classList.contains('hidden'))?'hidden':'shown'); }catch(e){}
       updateSideToggleLabel();
       markDirty();
       markCanvasResize();
-      markPlaneCanvasResize();
+      /* v5b: resize the 2D canvas directly (unconditional measure+write) so the
+         aspect ratio is correct on the FIRST paint, then again after layout. */
+      if(typeof resizePlaneCanvasNow==='function') resizePlaneCanvasNow();
+      if(typeof renderPlane2D==='function') renderPlane2D();
+      if(typeof refitPanelsSoon==='function') refitPanelsSoon();
     });
     updateSideToggleLabel();
 
 /* ============================================================
-   v3 MOBILE HELPERS -- top-bar toggles, 3D setup collapse, and
-   the "Pick on 3D" expand-to-anchor flow.  Purely additive: all
-   existing controls, ids, and handlers are untouched.
+   MOBILE / PANEL LAYOUT HELPERS - 3D view collapse via the
+   "Hide 3D" button (#toggle3d in the plane bar) and the setup
+   header (#mbSetupInline).  setSetup() mirrors the collapse
+   state onto #app (.setup3dCollapsed) so the CSS can widen the
+   2D panel, and re-fits both canvases on collapse/expand.
    ============================================================ */
 (function(){
   var mob = (window.matchMedia && window.matchMedia('(max-width:760px)').matches);
@@ -4855,14 +4908,20 @@ function initUI(){
   function setSetup(collapsed){
     if(!view) return;
     view.classList.toggle('setupCollapsed', !!collapsed);
-    var b = $id('mbSetup');
-    if(b) b.textContent = collapsed ? '3D setup' : 'Hide 3D';
+    /* mirror the state on #app so the CSS can widen the 2D panel */
+    var appEl = document.getElementById('app');
+    if(appEl) appEl.classList.toggle('setup3dCollapsed', !!collapsed);
     var bi = $id('mbSetupInline');
     if(bi) bi.innerHTML = (collapsed ? '\u25B8 3D view' : '\u25BE 3D view');
     var t3 = $id('toggle3d');
     if(t3) t3.textContent = collapsed ? 'Show 3D' : 'Hide 3D';
-    /* canvas + 2D panel must re-fit to the new box size */
+    /* canvas + 2D panel must re-fit to the new box size.
+       resizePlaneCanvasNow() measures the 2D canvas SYNCHRONOUSLY; because
+       the class toggles above already ran, the forced layout it triggers
+       already reflects the new panel width, so the backing store is correct
+       on the very first repaint.                                            */
     if(typeof markCanvasResize === 'function') markCanvasResize();
+    if(typeof resizePlaneCanvasNow === 'function') resizePlaneCanvasNow();
     if(typeof renderPlane2D === 'function') renderPlane2D();
     /* The canvases are display:none while collapsed, so glc.clientWidth is 0.
        On EXPAND we must re-measure only AFTER the browser has laid the now
@@ -4871,12 +4930,16 @@ function initUI(){
        then a second one shortly after (some browsers need two passes /
        a transition to finish), and always wake the render loop.            */
     function _refitGL(){
-      if(typeof markCanvasResize === 'function') markCanvasResize();
-      /* wake the render loop via the app's own mutator (markDirty sets
-         needsRedraw/dirtyHold in its correct scope - a bare assignment here
-         would not reach it, since this IIFE is a different scope).          */
-      if(typeof markDirty === 'function') markDirty();
+      /* direct 2D measure+write first, then the deferred refit pass */
+      if(typeof resizePlaneCanvasNow === 'function') resizePlaneCanvasNow();
       if(typeof renderPlane2D === 'function') renderPlane2D();
+      if(typeof refitPanelsSoon === 'function') refitPanelsSoon();
+      else {
+        if(typeof markCanvasResize === 'function') markCanvasResize();
+        if(typeof markPlaneCanvasResize === 'function') markPlaneCanvasResize();
+        if(typeof markDirty === 'function') markDirty();
+        if(typeof renderPlane2D === 'function') renderPlane2D();
+      }
     }
     if(!collapsed){
       /* expanding: wait for layout, then re-measure twice */
@@ -4885,14 +4948,16 @@ function initUI(){
       } else { setTimeout(_refitGL, 0); }
       setTimeout(_refitGL, 120);
     } else {
-      /* collapsing: nothing to measure, just refresh the 2D panel */
-      if(typeof renderPlane2D === 'function') renderPlane2D();
+      /* collapsing: the 2D panel WIDENS (desktop #app.setup3dCollapsed rule),
+         so its canvas must be re-measured exactly like the expand path.
+         The old code only redrew at the stale cached size here, which is
+         why the 2D panel deformed until a window resize forced a measure. */
+      if(typeof requestAnimationFrame === 'function'){
+        requestAnimationFrame(function(){ _refitGL(); requestAnimationFrame(_refitGL); });
+      } else { setTimeout(_refitGL, 0); }
+      setTimeout(_refitGL, 120);
     }
   }
-  var mbSetup = $id('mbSetup');
-  if(mbSetup) mbSetup.addEventListener('click', function(){
-    setSetup(!view.classList.contains('setupCollapsed'));
-  });
   var mbSetupInline = $id('mbSetupInline');
   if(mbSetupInline) mbSetupInline.addEventListener('click', function(){
     setSetup(!view.classList.contains('setupCollapsed'));
@@ -4905,46 +4970,7 @@ function initUI(){
   });
 
   /* ---- top-bar panel toggles mirror the existing state flags ---- */
-  var mbPlane = $id('mbPlane');
-  if(mbPlane) mbPlane.addEventListener('click', function(){
-    if(typeof S!=='undefined'){ S.panel2d = !S.panel2d; }
-    if(typeof setPanel2dVisibility==='function') setPanel2dVisibility();
-    else if(pw) pw.classList.toggle('hidden');
-    var c = $id('chkPanel'); if(c) c.checked = !!(typeof S!=='undefined' && S.panel2d);
-    /* v3: on phones the 2D panel sits at the bottom of the stack, so after
-       showing it, bring it into view. */
-    if(pw && !pw.classList.contains('hidden')){
-      if(typeof requestAnimationFrame==='function')
-        requestAnimationFrame(function(){ try{ pw.scrollIntoView({behavior:'smooth', block:'start'}); }catch(e){} });
-      else try{ pw.scrollIntoView(); }catch(e){}
-    }
-  });
-  var mbSide = $id('mbSide');
-  if(mbSide) mbSide.addEventListener('click', function(){
-    if(side) side.classList.toggle('hidden');
-    if(typeof updateSideToggleLabel==='function') updateSideToggleLabel();
-  });
 
-  /* ---- "Pick on 3D": expand the 3D view, arm the anchor hint,
-        and auto-collapse again once the user picks an atom. ---- */
-  var pickBtn = $id('pickOn3d');
-  var _armed = false;
-  function armPick(){
-    _armed = true;
-    setSetup(false);                 /* make sure 3D is visible */
-    var h=$id('pickHint'); if(h) h.classList.remove('gone');
-    try{ if(view) view.scrollIntoView({behavior:'smooth', block:'nearest'}); }catch(e){}
-  }
-  if(pickBtn) pickBtn.addEventListener('click', armPick);
-  /* collapse 3D again after a successful anchor (PLANE.anchor becomes non-null).
-     We watch cheaply on the existing canvas click path via a short poll. */
-  var _poll = setInterval(function(){
-    if(!_armed) return;
-    if(typeof PLANE!=='undefined' && PLANE && PLANE.anchor){
-      _armed = false;
-      if(mob) setSetup(true);
-    }
-  }, 250);
 
   /* ---- phones start with the 3D view EXPANDED (3D-first), so the user
          sees the structure and can pick the anchor immediately; the 2D
