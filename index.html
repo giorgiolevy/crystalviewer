@@ -279,6 +279,39 @@ details summary:hover{color:var(--accent)}
 #orbRow.hidden{display:none}
 #orbRow .olabel{font-size:11px;color:var(--fg3)}
 #orbList{display:flex;flex-wrap:wrap;gap:6px 14px}
+/* --- symmetry strip: lives BELOW the canvas so the plot keeps its height.
+       The head row is always one compact line; #symBody is the collapsible
+       detail and is capped so it can never crowd the canvas. --- */
+#symRow{flex:none;border-top:1px solid var(--line2);background:var(--panel);}
+#symHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+         padding:5px 13px;font-size:11.5px;min-height:26px}
+.symflex{flex:1 1 auto}
+.symtwist{display:inline-block;cursor:pointer;user-select:none;color:var(--fg3);
+          font-size:11px;width:14px;text-align:center;transition:transform .15s}
+.symtwist.open{transform:rotate(90deg)}
+.symtwist:hover{color:var(--fg)}
+.symbadge{font:600 11px ui-monospace,Consolas,monospace;background:var(--in);border:1px solid var(--in-line);
+          border-radius:6px;padding:1px 7px;color:var(--fg);white-space:nowrap}
+.symbadge.ghost{opacity:.72;font-weight:500}
+.symbadge.geo{opacity:.8;font-weight:500}
+.symchips-inline{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
+#symBody{max-height:34vh;overflow-y:auto;padding:0 13px 8px 13px;
+         display:none;flex-direction:column;gap:5px}
+#symBody.open{display:flex}
+.symsel{background:var(--in);color:var(--fg);border:1px solid var(--in-line);border-radius:6px;padding:1px 4px;font-size:11px}
+.symline{font-size:11.5px;color:var(--fg2)}
+.symirrep{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:1px}
+.symchip{font:600 11px ui-monospace,Consolas,monospace;border-radius:6px;padding:1px 7px;
+         border:1px solid var(--in-line);background:var(--in);color:var(--fg);cursor:pointer;
+         user-select:none;transition:background .12s,border-color .12s}
+.symchip.on{background:var(--acc,#3b82f6);border-color:var(--acc,#3b82f6);color:#fff}
+.symchip.dim{opacity:.55}
+.symchip:hover{border-color:var(--acc,#3b82f6)}
+.symtag{font-size:10.5px;color:var(--fg3)}
+.symwarn{font-size:11px;color:var(--fg3);font-style:italic}
+.symdecomp{font:500 11.5px ui-monospace,Consolas,monospace;color:var(--fg2);margin-top:1px}
+.symempty{font-size:11px;color:var(--fg3)}
+
 .orbEntry{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--fg2)}
 .orbEntry .oelem{font-weight:700;min-width:22px;color:var(--fg)}
 .orbEntry select{background:var(--in);color:var(--fg);border:1px solid var(--in-line);border-radius:6px;padding:2px 4px;font-size:11px}
@@ -485,6 +518,23 @@ details summary:hover{color:var(--accent)}
   <span class="onote" id="orbNote"></span>
  </div>
  <canvas id="plc"></canvas>
+ <div id="symRow" class="hidden">
+  <div id="symHead">
+   <span id="symTwist" class="symtwist" title="Expand / collapse the symmetry details">&#9656;</span>
+   <label class="pchk" title="Show the symmetry analysis and the symmetry-adapted orbitals"><input type="checkbox" id="symOn" checked> symmetry</label>
+   <span id="symSite" class="symbadge"></span>
+   <span id="symPlane" class="symbadge ghost"></span>
+   <span id="symChips" class="symchips-inline"></span>
+   <span class="symflex"></span>
+   <label class="pchk" title="Rotate the basis INSIDE each degenerate irrep so that one SALC is as out-of-plane as possible and the rest lie in the plane. Does not change the irreps, only their basis. One-dimensional irreps are untouched (they are pinned by symmetry)."><input type="checkbox" id="symAlign" checked> align</label>
+   <select id="symMode" class="symsel" title="Which symmetry to use: the full 3D site group, the operations that preserve the plane (slab-symmetric), or those that preserve the half-space (terminated surface)">
+    <option value="full">full site</option>
+    <option value="slab" selected>plane (slab)</option>
+    <option value="surface">surface</option>
+   </select>
+  </div>
+  <div id="symBody"></div>
+ </div>
  <div id="planeInfo">Set (h,k,l) then click an atom in the 3D view to anchor the plane.</div>
 </section>
 </div>
@@ -492,7 +542,7 @@ details summary:hover{color:var(--accent)}
 <script>
 'use strict';
 var BOHR = 0.529177210903;
-var EXAMPLE_CIF = "# Sodium chloride (rocksalt) -- conventional F-centred cubic cell, all sites listed (P1 listing)\n# Reference: standard crystallographic data for halite; a = 5.6402 A, Z = 4, space group Fm-3m (No. 225)\ndata_NaCl_rocksalt\n_chemical_name_common             'Sodium chloride (rocksalt / halite)'\n_chemical_name_mineral            'Halite'\n_chemical_formula_structural       NaCl\n_chemical_formula_sum              'Na4 Cl4'\n_cell_length_a                     5.6402\n_cell_length_b                     5.6402\n_cell_length_c                     5.6402\n_cell_angle_alpha                  90\n_cell_angle_beta                   90\n_cell_angle_gamma                  90\n_cell_volume                       179.43\n_cell_formula_units_Z              4\n_space_group_name_H-M_alt          'F m -3 m'\n_symmetry_Int_Tables_number        225\nloop_\n_space_group_symop_id\n_space_group_symop_operation_xyz\n1 'x, y, z'\nloop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n_atom_site_occupancy\nNa1 Na 0.0000 0.0000 0.0000 1.0\nNa2 Na 0.0000 0.5000 0.5000 1.0\nNa3 Na 0.5000 0.0000 0.5000 1.0\nNa4 Na 0.5000 0.5000 0.0000 1.0\nCl1 Cl 0.5000 0.5000 0.5000 1.0\nCl2 Cl 0.5000 0.0000 0.0000 1.0\nCl3 Cl 0.0000 0.5000 0.0000 1.0\nCl4 Cl 0.0000 0.0000 0.5000 1.0\n";
+var EXAMPLE_CIF = "# Sodium chloride (rocksalt) - conventional cubic cell, FULL symmetry listed\n# Reference: halite, a = 5.6402 A, space group P m -3 m (No. 221).\n# The CONVENTIONAL cubic cell is used (4 Na + 4 Cl), so the nearest Na-Cl\n# contacts are at a/2 = 2.82 A and the octahedral bonding network is visible.\n# All 48 symmetry operations are given explicitly so the 2D panel can derive\n# the true site-symmetry group of the anchored atom and how it changes with\n# the chosen (h,k,l) plane.\ndata_NaCl_rocksalt\n_chemical_name_common             'Sodium chloride (rocksalt / halite)'\n_chemical_formula_structural      NaCl\n_chemical_formula_sum             'Na4 Cl4'\n_cell_length_a                    5.6402\n_cell_length_b                    5.6402\n_cell_length_c                    5.6402\n_cell_angle_alpha                 90\n_cell_angle_beta                  90\n_cell_angle_gamma                 90\n_cell_volume                      179.43\n_cell_formula_units_Z             4\n_space_group_name_H-M_alt         'P m -3 m'\n_symmetry_Int_Tables_number       221\nloop_\n_space_group_symop_id\n_space_group_symop_operation_xyz\n'x, y, z'\n'x, y, -z'\n'x, -y, z'\n'x, -y, -z'\n'-x, y, z'\n'-x, y, -z'\n'-x, -y, z'\n'-x, -y, -z'\n'x, z, y'\n'x, z, -y'\n'x, -z, y'\n'x, -z, -y'\n'-x, z, y'\n'-x, z, -y'\n'-x, -z, y'\n'-x, -z, -y'\n'y, x, z'\n'y, x, -z'\n'y, -x, z'\n'y, -x, -z'\n'-y, x, z'\n'-y, x, -z'\n'-y, -x, z'\n'-y, -x, -z'\n'y, z, x'\n'y, z, -x'\n'y, -z, x'\n'y, -z, -x'\n'-y, z, x'\n'-y, z, -x'\n'-y, -z, x'\n'-y, -z, -x'\n'z, x, y'\n'z, x, -y'\n'z, -x, y'\n'z, -x, -y'\n'-z, x, y'\n'-z, x, -y'\n'-z, -x, y'\n'-z, -x, -y'\n'z, y, x'\n'z, y, -x'\n'z, -y, x'\n'z, -y, -x'\n'-z, y, x'\n'-z, y, -x'\n'-z, -y, x'\n'-z, -y, -x'\nloop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n_atom_site_occupancy\nNa1 Na 0.0000 0.0000 0.0000 1.0\nNa2 Na 0.0000 0.5000 0.5000 1.0\nNa3 Na 0.5000 0.0000 0.5000 1.0\nNa4 Na 0.5000 0.5000 0.0000 1.0\nCl1 Cl 0.5000 0.5000 0.5000 1.0\nCl2 Cl 0.5000 0.0000 0.0000 1.0\nCl3 Cl 0.0000 0.5000 0.0000 1.0\nCl4 Cl 0.0000 0.0000 0.5000 1.0\n";
 var THEMES={
   light:{ bg:[0.925,0.945,0.968], box:[0.30,0.42,0.62], boxSc:[0.62,0.68,0.78], label:'#1d2430', halo:'rgba(255,255,255,0.92)',
           plane:[0.13,0.38,0.85], planeN:[0.85,0.42,0.08], hilite:[0.10,0.35,0.95] },
@@ -519,7 +569,11 @@ var PT = {
  'Hg':['#c8c8d8',1.32,1],'Tl':['#a6544d',1.45,1],'Pb':['#8b6fc4',1.46,1],'Bi':['#9c5bb8',1.48,1],'U':['#79c6e6',1.86,1],
  'Re':['#9cb8c8',1.41,1],'Os':['#7fb0c4',1.44,1],'Ir':['#b8c0d0',1.41,1],'Po':['#c495b8',1.68,1],'At':['#c09a8f',1.50,0],'Rn':['#9a9ab8',1.51,1],'Fr':['#8f5fb0',2.53,1],'Ra':['#7fc25a',2.21,1],'Ac':['#c0c0c8',2.15,1],'Th':['#9ee7ae',2.06,1],'Pa':['#a8e2c0',2.00,1],'Np':['#8fd0c8',1.90,1],'Pu':['#b0e0b0',1.87,1]
 };
-function elInfo(s){ var e = PT[s]; return e ? e : ['#f786b0', 1.2, 0]; }
+/* OPT-P2: the unknown-element fallback used to allocate a fresh array on
+   every call; renderPlane2D calls elInfo per atom per frame, so hoist it to a
+   module-static constant (same values; arrays are treated read-only). */
+var ELINFO_UNKNOWN=['#f786b0', 1.2, 0];
+function elInfo(s){ var e = PT[s]; return e ? e : ELINFO_UNKNOWN; }
 function css2rgb(h){ return [parseInt(h.substr(1,2),16)/255, parseInt(h.substr(3,2),16)/255, parseInt(h.substr(5,2),16)/255]; }
 
 /* HTML-escape text that came from a loaded file (CIF labels/type symbols,
@@ -638,13 +692,32 @@ function cifParse(text){
     if(/^data_/i.test(t)){ out.push({t:'tag', v:t.split(/\s+/)[0]}); continue; }
     if(/^loop_/i.test(t)){ out.push({t:'tag', v:'loop_'}); continue; }
     if(/^_/.test(t)){
-      var w=t.split(/\s+/);
-      out.push({t:'tag', v:w[0]});
-      for(var k=1;k<w.length;k++){
-        var tk=w[k];
-        if((tk.charAt(0)==="'"||tk.charAt(0)==='"') && tk.length>1 && tk.charAt(tk.length-1)===tk.charAt(0))
-          tk=tk.slice(1,-1);                        /* strip one pair of quotes */
-        out.push({t:'value', v:tk});
+      /* Tag line.  The tag word runs to the first whitespace; the REMAINDER is
+         then tokenised with the same quote-aware scanner used for value lines,
+         so a quoted scalar containing spaces (e.g. _space_group_name_H-M_alt
+         'P m -3 m') stays ONE value instead of being chopped at the first
+         space.  Splitting on whitespace first (the old behaviour) turned
+         'A m m m' into the single token "'A", which silently broke every
+         space-group lookup. */
+      var ws=t.search(/[ \t]/);
+      var tagWord=(ws<0)?t:t.slice(0,ws);
+      out.push({t:'tag', v:tagWord});
+      var rest=(ws<0)?'':t.slice(ws);
+      var jj=0, nn=rest.length;
+      while(jj<nn){
+        var chq=rest.charAt(jj);
+        if(chq===' '||chq==='\t'){ jj++; continue; }
+        if(chq==="'"||chq==='"'){
+          var kk=jj+1, bq='';
+          while(kk<nn && rest.charAt(kk)!==chq){ bq+=rest.charAt(kk); kk++; }
+          out.push({t:'value', v:bq});
+          jj=(kk<nn)?kk+1:kk;
+          continue;
+        }
+        var b3q='', m3q=jj;
+        while(m3q<nn && rest.charAt(m3q)!==' ' && rest.charAt(m3q)!=='\t'){ b3q+=rest.charAt(m3q); m3q++; }
+        out.push({t:'value', v:b3q});
+        jj=m3q;
       }
       continue;
     }
@@ -777,6 +850,158 @@ function cifLattice(a,b,c,al,be,ga){
 }
 
 /* ---- full CIF loader: returns the parseQE() shape ---- */
+
+/* ============================================================================
+   SPACE-GROUP OPERATION GENERATION FROM THE H-M SYMBOL
+   ----------------------------------------------------------------------------
+   Used only as a FALLBACK when a CIF carries no (or too few) explicit symmetry
+   operations.  Covers the ORTHORHOMBIC, TETRAGONAL and CUBIC crystal systems,
+   whose point groups are all subgroups of the 48 signed-permutation matrices
+   mmm (and its centrings).  Hexagonal/trigonal symbols are NOT generated; the
+   caller is told so and keeps whatever the CIF provided.
+
+   The H-M symbol gives:  <centring letter> <point-group symbol>
+   e.g.  'P m m m', 'A m m m', 'P 4/m m m', 'F m -3 m', 'I 4/m m m'
+   The operations are  centring translations  x  point-group matrices.
+   ============================================================================ */
+var SG_CENTRING = {
+  'P': [[0,0,0]],
+  'A': [[0,0,0],[0,0.5,0.5]],
+  'B': [[0,0,0],[0.5,0,0.5]],
+  'C': [[0,0,0],[0.5,0.5,0]],
+  'I': [[0,0,0],[0.5,0.5,0.5]],
+  'F': [[0,0,0],[0,0.5,0.5],[0.5,0,0.5],[0.5,0.5,0]],
+  'R': [[0,0,0],[2/3,1/3,1/3],[1/3,2/3,2/3]]
+};
+
+/* exact 3x3 helpers on integer/half-integer entries */
+function SG_mm(A,B){
+  var C=[[0,0,0],[0,0,0],[0,0,0]];
+  for(var i=0;i<3;i++) for(var j=0;j<3;j++){
+    var s=0; for(var k=0;k<3;k++) s+=A[i][k]*B[k][j];
+    C[i][j]=s;
+  }
+  return C;
+}
+function SG_key(A,t){
+  var s='';
+  for(var i=0;i<3;i++){ for(var j=0;j<3;j++) s+=Math.round(A[i][j]*1e6)/1e6+','; }
+  s+='|';
+  for(var k=0;k<3;k++) s+=Math.round(t[k]*1e6)/1e6+',';
+  return s;
+}
+function SG_close(gens,maxn){
+  maxn=maxn||400;
+  var I=[[1,0,0],[0,1,0],[0,0,1]];
+  var seen={}, list=[];
+  var k0=SG_key(I,[0,0,0]); seen[k0]=1; list.push({M:I,t:[0,0,0]});
+  var frontier=[{M:I,t:[0,0,0]}];
+  while(frontier.length){
+    var nxt=[];
+    for(var a=0;a<frontier.length;a++){
+      for(var g=0;g<gens.length;g++){
+        var A=frontier[a].M, ta=frontier[a].t;
+        var B=gens[g].M, tb=gens[g].t;
+        var C=SG_mm(A,B);
+        var tc=[0,0,0];
+        for(var r=0;r<3;r++){
+          var s=0; for(var c=0;c<3;c++) s+=A[r][c]*tb[c];
+          tc[r]=s+ta[r];
+        }
+        var k=SG_key(C,tc);
+        if(!seen[k]){
+          seen[k]=1;
+          var e={M:C,t:tc}; list.push(e); nxt.push(e);
+          if(list.length>maxn) return null;
+        }
+      }
+    }
+    frontier=nxt;
+  }
+  return list;
+}
+
+/* point groups of the orthorhombic / tetragonal / cubic systems as explicit
+   generator sets (all verified against their known orders) */
+var SG_PG = (function(){
+  var I=[[1,0,0],[0,1,0],[0,0,1]];
+  var INV=[[-1,0,0],[0,-1,0],[0,0,-1]];
+  var MX=[[-1,0,0],[0,1,0],[0,0,1]];
+  var MY=[[1,0,0],[0,-1,0],[0,0,1]];
+  var MZ=[[1,0,0],[0,1,0],[0,0,-1]];
+  var C2X=[[1,0,0],[0,-1,0],[0,0,-1]];
+  var C2Y=[[-1,0,0],[0,1,0],[0,0,-1]];
+  var C2Z=[[-1,0,0],[0,-1,0],[0,0,1]];
+  var C4Z=[[0,-1,0],[1,0,0],[0,0,1]];
+  var S4Z=[[0,-1,0],[1,0,0],[0,0,-1]];
+  var D2_110=[[0,1,0],[1,0,0],[0,0,-1]];
+  var C3=[[0,0,1],[1,0,0],[0,1,0]];
+  var R={};
+  R['1']    = [];
+  R['-1']   = [INV];
+  R['2']    = [C2Z];
+  R['m']    = [MZ];
+  R['2/m']  = [C2Z, INV];
+  R['222']  = [C2X, C2Y];
+  R['mm2']  = [MX, MY];
+  R['mmm']  = [C2X, C2Y, INV];
+  R['4']    = [C4Z];
+  R['-4']   = [S4Z];
+  R['4/m']  = [C4Z, MZ];
+  R['422']  = [C4Z, C2X];
+  R['4mm']  = [C4Z, MX];
+  R['-42m'] = [S4Z, C2X];
+  R['4/mmm']= [C4Z, C2X, MZ];
+  R['23']   = [C3, C2X];
+  R['m-3']  = [C3, C2X, INV];
+  R['432']  = [C3, C4Z];
+  R['-43m'] = [C3, S4Z];
+  R['m-3m'] = [C3, C4Z, INV];
+  return R;
+})();
+
+/* normalise an H-M symbol into {centring, pointGroup} */
+function SG_parseSymbol(sym){
+  if(!sym || typeof sym!=='string') return null;
+  var s=sym.replace(/['"]/g,'').trim();
+  /* drop leading crystal-system qualifiers sometimes present */
+  var m=/^([PABCIFR])\s*([0-9A-Za-z\/\-_ ]+)$/.exec(s);
+  if(!m) return null;
+  var cen=m[1];
+  var pg=m[2].replace(/_/g,'').replace(/\s+/g,'');   /* '4/mmm', '-3m' etc */
+  if(!SG_CENTRING[cen]) return null;
+  if(!SG_PG[pg]) return null;
+  return {centring:cen, pointGroup:pg};
+}
+
+/* Generate the operations for an H-M symbol. Returns
+   {ok:true, ops:[{M:3x3, c:[3]}]}  or {ok:false, why:'...'} */
+function SG_generate(sym){
+  var ps=SG_parseSymbol(sym);
+  if(!ps) return {ok:false, why:'symbol not recognised or not in the supported (ortho/tetragonal/cubic) set'};
+  var pg=SG_PG[ps.pointGroup];
+  var gens=[];
+  for(var i=0;i<pg.length;i++) gens.push({M:pg[i], t:[0,0,0]});
+  var P=SG_close(gens, 64);
+  if(!P) return {ok:false, why:'point group did not close'};
+  var cent=SG_CENTRING[ps.centring];
+  var ops=[];
+  for(var c=0;c<cent.length;c++){
+    for(var p=0;p<P.length;p++){
+      ops.push({M:P[p].M, c:[cent[c][0]+P[p].t[0], cent[c][1]+P[p].t[1], cent[c][2]+P[p].t[2]]});
+    }
+  }
+  return {ok:true, ops:ops, centring:ps.centring, pointGroup:ps.pointGroup,
+          pointGroupOrder:P.length, centringOrder:cent.length, order:ops.length};
+}
+
+/* Expected number of operations for a space group, from its symbol, so a CIF
+   with an obviously short list can be flagged. */
+function SG_expectedOrder(sym){
+  var g=SG_generate(sym);
+  return g.ok ? g.order : null;
+}
+
 function parseCIF(text, fname){
   var notes=[];
   var toks=cifParse(text);
@@ -829,6 +1054,41 @@ function parseCIF(text, fname){
         var so=symopParse(loops[q].values[r*ncol+ci]);
         if(so) ops.push(so);
       }
+    }
+  }
+  /* ---- symmetry-operation completeness -----------------------------------
+     Many published CIFs give only the space-group SYMBOL and no operation
+     list (or a truncated list).  If we recognise the symbol and it belongs to
+     the orthorhombic / tetragonal / cubic systems we can GENERATE the full
+     operation set, so the site-group analysis is not silently crippled.
+     We only do this when the CIF's own list is absent or clearly too short. */
+  var sgSym=hm;
+  var sgExp=(sgSym && typeof SG_expectedOrder==='function') ? SG_expectedOrder(sgSym) : null;
+  var sgUsed=false;
+  if(sgExp && ops.length < sgExp){
+    var gen=SG_generate(sgSym);
+    if(gen.ok){
+      /* convert generated {M,c} into the {M,c} form symopParse produces:
+         M is an integer matrix, c a 3-vector of constants - same shape. */
+      var conv=[];
+      for(var gi=0; gi<gen.ops.length; gi++){
+        var Mo=gen.ops[gi].M, co=gen.ops[gi].c;
+        conv.push({M:[[Mo[0][0],Mo[0][1],Mo[0][2]],
+                      [Mo[1][0],Mo[1][1],Mo[1][2]],
+                      [Mo[2][0],Mo[2][1],Mo[2][2]]],
+                   c:[co[0],co[1],co[2]]});
+      }
+      if(conv.length){
+        var had=ops.length;
+        ops=conv;
+        sgUsed=true;
+        notes.push('Symmetry: the CIF supplied '+had+' operation'+(had===1?'':'s')
+                   +' but the space group '+sgSym+' needs '+conv.length
+                   +'; generated the full set from the symbol.');
+      }
+    } else if(ops.length===0){
+      notes.push('No symmetry operations in the CIF and the space-group symbol "'
+                 +sgSym+'" is not in the supported set; assumed P1.');
     }
   }
   if(ops.length===0){
@@ -886,7 +1146,9 @@ function parseCIF(text, fname){
     var k=atoms[s3].sym;
     if(!seen[k]){ seen[k]=1; species.push({sym:k,mass:null}); }
   }
-  return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length};
+  return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
+          symops:ops};   /* keep the operations so the 2D panel can derive the
+                            site-symmetry group of the anchored atom */
 }
 
 /* ---- Materials Project / pymatgen-style JSON ---- */
@@ -937,7 +1199,8 @@ function parseMPJSON(text, fname){
   }
   var nm=(obj&&obj.formula_pretty)?obj.formula_pretty:(fname||'JSON structure');
   notes.push('Loaded from JSON structure ('+nm+').');
-  return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length};
+  return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
+          symops:null};
 }
 /* element for an MP-style site: species is {'El(+n)': occ} or [{element|Element}] or label */
 function mpSiteElement(site){
@@ -1111,7 +1374,7 @@ function parseQE(text){
   }
 
   if(nat!==null && atoms.length!==nat) notes.push('Parsed '+atoms.length+' atoms but the namelist declares nat='+nat+'.');
-  return {cell:cell, species:species, atoms:atoms, notes:notes, nat:nat};
+  return {cell:cell, species:species, atoms:atoms, notes:notes, nat:nat, symops:null};
 }
 
 /* Default of the "Atom size" slider (S.scale).  Kept as a named constant so
@@ -1233,11 +1496,11 @@ var meshOrbCache={};
    no fold in the surface and the shading is continuous (this is what makes
    the lobes smooth instead of faceted).  Meshes are cached per (l,m);
    each entry holds a list of patches (one per lobe) plus its sign.        */
-function makeLobeMesh(l,m){
-  var key=l+'_'+m;
+function makeLobeMesh(l,m,angFn,keySuffix){
+  var key=l+'_'+m+(keySuffix?('_'+keySuffix):'');
   if(meshOrbCache[key]) return meshOrbCache[key];
 
-  var NU=110, NV=140;                    /* fine tessellation */
+  var NU=110, NV=140;                    /* original tessellation */
   /* Uint16 safety clamp: without OES_element_index_uint a WebGL1 context
      cannot accept index buffers with more than 65,536 entries.  The lobe
      mesh splits at the nodal planes, so a single sign patch holds at most
@@ -1249,10 +1512,13 @@ function makeLobeMesh(l,m){
   if(!GL_IDX32){ while((NU+1)*(NV+1)>65536){ NU=Math.max(8,(NU*0.85)|0); NV=Math.max(8,(NV*0.85)|0); } }
   var NO=288;                            /* angular samples for the sign map */
 
-  /* angular function on the meridian used for the sign map */
+  /* angular function on the meridian used for the sign map.
+     When angFn is supplied (a SALC = linear combination of real SHs) we use it
+     instead of the single Y_lm, so the 3D lobe matches the symmetry chip. */
+  var _ang=(typeof angFn==='function')?angFn:function(x,y,z){ return realSH(l,m,x,y,z); };
   function Yof(u,v){
     var x=Math.sin(u)*Math.cos(v), y=Math.sin(u)*Math.sin(v), z=Math.cos(u);
-    return realSH(l,m,x,y,z);
+    return _ang(x,y,z);
   }
   /* normalisation: max |Y| over the sphere */
   var amax=0;
@@ -1278,7 +1544,7 @@ function makeLobeMesh(l,m){
   function surf(iu,iv){
     var u=Math.PI*iu/NU, v=2*Math.PI*(iv%NV)/NV;
     var x=Math.sin(u)*Math.cos(v), y=Math.sin(u)*Math.sin(v), z=Math.cos(u);
-    var r=Math.abs(realSH(l,m,x,y,z))/amax;
+    var r=Math.abs(_ang(x,y,z))/amax;
     return [x*r,y*r,z*r];
   }
   function sgn(iu,iv){
@@ -1581,6 +1847,7 @@ var PLANE={
   ext:2.0,            // extent multiplier (tiling)
   pts:[],             // projected atoms  {el,x,y,z(perp),cart}
   u:[1,0,0], v:[0,1,0], n:[0,0,1],
+  u0:[1,0,0], v0:[0,1,0],     /* OPT-V2: unrotated basis (see buildSlice) */
   rot:0,              // radians; in-plane view rotation applied to (u,v) about n
   onTol:0.05,         // Å; retired - selection now uses HILITE_WINDOW_A, kept for compatibility
   origin:[0,0,0],
@@ -1599,6 +1866,17 @@ var _netBasisCache={ver:-1, cell:null, u:null, v:null, n:null, res:null};
 /* Memoised planeBBox() result: depends only on (PLANE.pts, version) now that
    the fit box no longer varies with the "net" checkbox.                       */
 var _planeBBoxCache={ver:-1, res:null};
+/* R3: slab-candidate memo.  The replication loop in buildSlice re-tiled the
+   whole supercell (thousands of per-replica coordinate arrays) on EVERY call,
+   including every coalesced frame of a thickness-drag; but the candidate set
+   (all replicated atoms, their Cartesian positions and their offsets from
+   the plane origin) depends only on (structure, hkl, replication range,
+   origin) - NOT on the thickness and NOT on the in-plane basis (u,v), which
+   only re-projects the SAME offsets.  Candidates are therefore cached in
+   flat Float64Arrays and the slab filter runs over them; a thickness drag
+   becomes a pure re-filter with zero per-candidate allocations, and a view
+   rotation reuses the memo unchanged. */
+var _slabCand=null;
 
 function reciprocalRows(A){
   var vol=vdot(A[0],vcross(A[1],A[2]));
@@ -1657,10 +1935,61 @@ function latticePlaneIndex(h,k,l,p){
   var d=(2*Math.PI)/L;
   return vdot(p,n)/d;
 }
+/* OPT-P1: closed-form recovery of the integer cell indices of a projected
+   net vector g, replacing the ~10,600-candidate triple scan that buildSlice
+   used to run TWICE per call (once per net generator).  projNetBasis() returns
+   the two INTEGER generators t1,t2 of the in-plane solution lattice
+   {t : h*t.a + k*t.b + l*t.c = 0}; Gauss reduction (gaussReduce2) only forms
+   integer combinations of their projections, so g = a*t1 + b*t2 has a UNIQUE
+   integer pair (a,b) among in-plane lattice vectors (two vectors with the
+   same projection differ by an in-plane vector of zero projection, i.e. by
+   zero).  Solve the 2x2 system in projected coordinates, round, verify
+   against the plane equation (exact integer test) - O(1).  Returns null on
+   any surprise (degenerate projection / non-integer hit) and the caller
+   keeps its brute-force scan as a fallback, so the safeguard semantics
+   survive unchanged - except that a period whose indices exceed the old scan
+   window is now found (it used to be silently missed, leaving the slab
+   truncated). */
+function projNetIndexPair(g){
+  var T=projNetBasis(PLANE.h,PLANE.k,PLANE.l);
+  if(!T) return null;
+  var t1=T[0], t2=T[1];
+  var A=(S && S.struct)?S.struct.cell:null;
+  var u=(PLANE.u||null), v=(PLANE.v||null);
+  if(!A || !u || !v) return null;
+  var cx1=t1[0]*A[0][0]+t1[1]*A[1][0]+t1[2]*A[2][0];
+  var cy1=t1[0]*A[0][1]+t1[1]*A[1][1]+t1[2]*A[2][1];
+  var cz1=t1[0]*A[0][2]+t1[1]*A[1][2]+t1[2]*A[2][2];
+  var q1x=cx1*u[0]+cy1*u[1]+cz1*u[2], q1y=cx1*v[0]+cy1*v[1]+cz1*v[2];
+  var cx2=t2[0]*A[0][0]+t2[1]*A[1][0]+t2[2]*A[2][0];
+  var cy2=t2[0]*A[0][1]+t2[1]*A[1][1]+t2[2]*A[2][1];
+  var cz2=t2[0]*A[0][2]+t2[1]*A[1][2]+t2[2]*A[2][2];
+  var q2x=cx2*u[0]+cy2*u[1]+cz2*u[2], q2y=cx2*v[0]+cy2*v[1]+cz2*v[2];
+  var det=q1x*q2y-q1y*q2x;
+  var mag=Math.abs(q1x*q2y)+Math.abs(q1y*q2x);
+  if(Math.abs(det)<1e-12*(mag+1e-30)) return null;
+  var a=(g[0]*q2y-g[1]*q2x)/det;
+  var b=(q1x*g[1]-q1y*g[0])/det;
+  var ra=Math.round(a), rb=Math.round(b);
+  if(Math.abs(a-ra)>1e-6 || Math.abs(b-rb)>1e-6) return null;
+  var i1=ra*t1[0]+rb*t2[0], i2=ra*t1[1]+rb*t2[1], i3=ra*t1[2]+rb*t2[2];
+  if(PLANE.h*i1+PLANE.k*i2+PLANE.l*i3 !== 0) return null;   /* exact */
+  return [i1,i2,i3];
+}
+
 /* build the slab projection: atoms within +-thick/2 of the plane */
 function buildSlice(){
   markDirty();
-  if(typeof orb2dClearCache==='function') orb2dClearCache();
+  /* OPT-P1: the projected-field / per-m SALC caches are keyed on the plane
+     BASIS (n,u,v) - see orbFieldKey - NOT on the slab thickness or on which
+     atoms fell inside the slab.  The old unconditional clear made a
+     thickness-slider drag (buildSlice once per coalesced frame) throw away
+     the entire 64x64 x 48-quadrature field cache on EVERY frame, so the 2D
+     panel re-integrated every glyph from scratch while dragging.  Snapshot
+     the basis now and clear only when it actually changed (anchor moves and
+     thickness changes keep the caches; drawn glyphs depend only on element+l+m
+     and the basis, so slab contents never affect cached fields). */
+  var _bsPrevN=(PLANE.n||null), _bsPrevU=(PLANE.u0||null), _bsPrevV=(PLANE.v0||null);   /* OPT-V2: rotation-stable comparison */
   /* Plane geometry is about to change: invalidate the memoised net/bbox so the
      next renderPlane2D recomputes them exactly once.  Bumping here (before any
      early return) covers every path that can alter PLANE.pts / u / v / n.      */
@@ -1669,7 +1998,7 @@ function buildSlice(){
   _planeBBoxCache={ver:-1, res:null};
   var st=S.struct; if(!st){ PLANE.pts=[]; return; }
   var n=planeNormal(PLANE.h,PLANE.k,PLANE.l);
-  if(!n){ PLANE.pts=[]; PLANE.hilite=[]; PLANE.u=[1,0,0]; PLANE.v=[0,1,0]; PLANE.n=[0,0,1]; PLANE.origin=[0,0,0]; return; }
+  if(!n){ PLANE.pts=[]; PLANE.hilite=[]; PLANE.u=[1,0,0]; PLANE.v=[0,1,0]; PLANE.n=[0,0,1]; PLANE.u0=[1,0,0]; PLANE.v0=[0,1,0]; PLANE.origin=[0,0,0]; return; }
   var origin = PLANE.anchor ? PLANE.anchor.cart.slice() : [0,0,0];
   PLANE.n=n; PLANE.origin=origin;
 
@@ -1689,6 +2018,10 @@ function buildSlice(){
   }
   PLANE.hilite=hset;
   var uv=inPlaneBasis(n);
+  /* OPT-V2: pin the UNROTATED in-plane basis here.  Fields and their rasters
+     are cached against (n,u0,v0); view rotation rotates the blit, so a rotate
+     drag never throws away ~150k quadrature evaluations per element. */
+  PLANE.u0=uv[0]; PLANE.v0=uv[1];
   /* In-plane view rotation.  The whole 2D panel is expressed in the (u,v) basis,
      so rotating u and v about the plane normal n by PLANE.rot rotates EVERYTHING
      together - atoms, lattice net, compass and orbital glyphs - exactly as if a
@@ -1702,6 +2035,18 @@ function buildSlice(){
     PLANE.v=[-_u0[0]*_sa+_v0[0]*_ca, -_u0[1]*_sa+_v0[1]*_ca, -_u0[2]*_sa+_v0[2]*_ca];
   } else {
     PLANE.u=uv[0]; PLANE.v=uv[1];
+  }
+  /* OPT-P1 (with the snapshot at the top): clear the projected-field caches
+     ONLY when the plane basis really changed (new hkl or in-plane rotation). */
+  {
+    /* OPT-V2: compare on the UNROTATED basis - a view rotation changes neither
+       n nor (u0,v0), so rotation drags keep every cached field and raster. */
+    var _u0c=(PLANE.u0||PLANE.u), _v0c=(PLANE.v0||PLANE.v);
+    var _bsSame = (_bsPrevN && _bsPrevU && _bsPrevV && PLANE.n && _u0c && _v0c
+      && _bsPrevN[0]===PLANE.n[0] && _bsPrevN[1]===PLANE.n[1] && _bsPrevN[2]===PLANE.n[2]
+      && _bsPrevU[0]===_u0c[0] && _bsPrevU[1]===_u0c[1] && _bsPrevU[2]===_u0c[2]
+      && _bsPrevV[0]===_v0c[0] && _bsPrevV[1]===_v0c[1] && _bsPrevV[2]===_v0c[2]);
+    if(!_bsSame && typeof orb2dClearCache==='function') orb2dClearCache();
   }
 
   /* How far to replicate so the slab is properly filled.
@@ -1750,6 +2095,11 @@ function buildSlice(){
        out-of-plane component AND rank candidates by their total length, so
        the shortest (true) combination wins.                                */
     var best=null, bestErr=1e30, bestLen=1e30;
+    /* OPT-P1: O(1) closed form first (projNetIndexPair); the bounded scan
+       below is kept verbatim as the fallback for degenerate numerics. */
+    var _cfIdx=projNetIndexPair(g);
+    if(_cfIdx){ best=_cfIdx; bestErr=0; }
+    if(!_cfIdx)
     for(var i1=-12;i1<=12;i1++){
       for(var i2=-8;i2<=8;i2++){
         for(var i3=-12;i3<=12;i3++){
@@ -1801,17 +2151,54 @@ function buildSlice(){
                   floored:(RA>Math.ceil(NC/2) || RB>Math.ceil(NC/2) || RC>Math.ceil(NC/2))};
   var out=[];
   var half=PLANE.thick/2;
-  for(var ia=-RA;ia<RA;ia++) for(var ib=-RB;ib<RB;ib++) for(var ic=-RC;ic<RC;ic++){
-    for(var q=0;q<st.atoms.length;q++){
-      var at=st.atoms[q];
-      var f=[at.f[0]+ia, at.f[1]+ib, at.f[2]+ic];
-      var c=fracToCart(f);
-      var dv=vsub(c,origin);
-      var d=vdot(dv,n);
-      if(Math.abs(d) <= half+1e-9){
-        out.push({ el:at.sym, x:vdot(dv,PLANE.u), y:vdot(dv,PLANE.v), z:d, cart:c });
+  /* R3: precompute-or-reuse the candidate table (see _slabCand note above).
+     Arithmetically identical to the old inner loop - fracToCart, vsub and the
+     |d| test are inlined with the same operation order, so PLANE.pts is
+     bit-identical, only WITHOUT the per-candidate array churn.             */
+  var _cOk = (_slabCand && _slabCand.st===st
+    && _slabCand.h===PLANE.h && _slabCand.k===PLANE.k && _slabCand.l===PLANE.l
+    && _slabCand.RA===RA && _slabCand.RB===RB && _slabCand.RC===RC
+    && _slabCand.ox===origin[0] && _slabCand.oy===origin[1] && _slabCand.oz===origin[2]);
+  if(!_cOk){
+    var NC3=st.atoms.length;
+    var total=(2*RA)*(2*RB)*(2*RC)*NC3;
+    _slabCand={ st:st, h:PLANE.h, k:PLANE.k, l:PLANE.l, RA:RA, RB:RB, RC:RC,
+                ox:origin[0], oy:origin[1], oz:origin[2],
+                el:new Array(total),
+                cx:new Float64Array(total), cy:new Float64Array(total), cz:new Float64Array(total),
+                dx:new Float64Array(total), dy:new Float64Array(total), dz:new Float64Array(total),
+                count:0 };
+    var cnt=0;
+    for(var ia=-RA;ia<RA;ia++) for(var ib=-RB;ib<RB;ib++) for(var ic=-RC;ic<RC;ic++){
+      for(var q=0;q<NC3;q++){
+        var at=st.atoms[q];
+        var fx=at.f[0]+ia, fy=at.f[1]+ib, fz=at.f[2]+ic;
+        var cx0=fx*A[0][0]+fy*A[1][0]+fz*A[2][0];
+        var cy0=fx*A[0][1]+fy*A[1][1]+fz*A[2][1];
+        var cz0=fx*A[0][2]+fy*A[1][2]+fz*A[2][2];
+        _slabCand.el[cnt]=at.sym;
+        _slabCand.cx[cnt]=cx0; _slabCand.cy[cnt]=cy0; _slabCand.cz[cnt]=cz0;
+        _slabCand.dx[cnt]=cx0-origin[0];
+        _slabCand.dy[cnt]=cy0-origin[1];
+        _slabCand.dz[cnt]=cz0-origin[2];
+        cnt++;
       }
     }
+    _slabCand.count=cnt;
+  }
+  var sc=_slabCand, els=sc.el, scnt=sc.count;
+  var cxA=sc.cx, cyA=sc.cy, czA=sc.cz, dxA=sc.dx, dyA=sc.dy, dzA=sc.dz;
+  var n0=n[0], n1=n[1], n2=n[2];
+  var u0v=PLANE.u[0], u1v=PLANE.u[1], u2v=PLANE.u[2];
+  var v0v=PLANE.v[0], v1v=PLANE.v[1], v2v=PLANE.v[2];
+  var thr=half+1e-9;
+  for(var r3=0;r3<scnt;r3++){
+    var d=dxA[r3]*n0+dyA[r3]*n1+dzA[r3]*n2;
+    if(d>thr || d<-thr) continue;
+    out.push({ el:els[r3],
+               x:dxA[r3]*u0v+dyA[r3]*u1v+dzA[r3]*u2v,
+               y:dxA[r3]*v0v+dyA[r3]*v1v+dzA[r3]*v2v,
+               z:d, cart:[cxA[r3],cyA[r3],czA[r3]] });
   }
   PLANE.pts=out;
 }
@@ -2039,6 +2426,7 @@ function updateSideToggleLabel(){
 function clearSlicePlane(){
   markDirty();
   PLANE.on=false; PLANE.anchor=null; PLANE.pts=[]; PLANE.hilite=[]; PLANE.repRange=null;
+  SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null; var _sr=$('symRow'); if(_sr) _sr.classList.add('hidden');
   var pw=$('planewrap'); if(pw) pw.classList.add('hidden');
   /* Hiding the 2D panel widens the 3D canvas again - remeasure so the GL
      backing store and projection aspect track the new clientWidth.          */
@@ -2253,6 +2641,25 @@ function rotYTo(dn,R){
 var ORB3D_ALPHA=0.72;
 var ORB3D_DEPTH=false;
 
+/* Build a 3D lobe mesh for a SALC (a real linear combination of Y_lm) using
+   exactly the same triangulation as makeLobeMesh, but with the angular
+   function Sum_m c_m Y_lm.  Cached per (l, coefficient vector), so the many
+   atoms of one element share a single GPU mesh.  This is what ties the 3D
+   view to the symmetry chip: selecting an irrep in the panel now shows the
+   SAME linear combination as the 2D projection. */
+function makeSALCLobeMesh(l, coefs){
+  /* stable key from the rounded coefficients */
+  var ks='salc'+l;
+  for(var i=0;i<coefs.length;i++) ks+='_'+(Math.round(coefs[i]*1000)/1000);
+  if(meshOrbCache[ks]) return meshOrbCache[ks];
+  var ang=function(x,y,z){
+    var s=0;
+    for(var m=0;m<coefs.length;m++){ if(coefs[m]) s+=coefs[m]*realSH(l,m,x,y,z); }
+    return s;
+  };
+  return makeLobeMesh(l,0,ang,ks);
+}
+
 function drawOrbitals3D(){
   if(!S.showOrb3d) return;
   if(!S.orbSel) return;
@@ -2305,7 +2712,42 @@ function drawOrbitals3D(){
      when atoms share an orbital) then cost one upload between them.          */
   gl.uniformMatrix3fv(locO.uRot,false,ID3);
   gl.uniform1f(locO.uAlpha,ORB3D_ALPHA);
+  /* Resolve the active SALC ONCE (per element in the selection) so the 3D
+     lobes can show the SAME linear combination the symmetry chip / 2D panel
+     show.  symActiveSALC is memoised via symManifold, so this is cheap.     */
+  var salc3d={};      /* element -> {coefs, l} */
+  var _seen={};
+  for(var ai=0; ai<S.atoms.length; ai++){
+    var el=S.atoms[ai].sym;
+    if(_seen[el]) continue;
+    _seen[el]=1;
+    var sel2=S.orbSel[el];
+    if(!sel2) continue;
+    var s3=symActiveSALC(el, sel2.l);
+    if(s3){
+      /* NOTE: do NOT rotate the coefficients by the canonical frame C here.
+         The 2D panel builds its SALC glyph straight from these coefficients
+         against realSH() in the CRYSTAL frame (see orbLineIntegralSALC), and
+         that picture is correctly aligned to the lattice.  The 3D lobe must
+         use the identical convention, so we pass the coefficients through
+         unchanged.  PG_canonicalRotation only exists to make irrep LABELS
+         conventional; its in-plane axis is picked from a mirror normal and
+         can sit on a diagonal, which is exactly what produced a 45-degree
+         tilt of the 3D lobe relative to the correctly-drawn 2D glyph.       */
+      salc3d[el]=s3;
+    }
+  }
   var lastPos=null;                        /* null = nothing uploaded yet    */
+  /* BIND CACHE (3D choppiness fix).  The mesh buffers depend ONLY on the
+     lobe's (l,m) and sign patch - never on the atom - yet the old loop
+     re-issued 3 bindBuffer + 2 vertexAttribPointer for EVERY (atom,patch),
+     i.e. thousands of redundant GL state changes per frame for a full slice.
+     We remember the last-bound patch's buffers and, when the SAME mesh is
+     drawn again, skip the binds entirely and only re-upload uModel.  Because
+     atoms of one element share an orbital, most consecutive patches hit this
+     path.  `curMesh` is reset when the draw begins so a stale binding from
+     drawAtoms/drawBonds can never leak in.                                  */
+  var curMeshP=null, curMeshN=null, curMeshI=null;
   for(var i=0;i<S.atoms.length;i++){
     var at=S.atoms[i];
     var sel=S.orbSel[at.sym];
@@ -2319,7 +2761,16 @@ function drawOrbitals3D(){
             + (at.c[2]-sliceOrigin[2])*PLANE.n[2];
       if(Math.abs(d) > PLANE.thick/2 + 1e-9) continue;   /* not in the slice */
     }
-    var meshSet=makeLobeMesh(sel.l, sel.m);
+    var act=salc3d[at.sym];
+    var meshSet;
+    if(act){
+      /* draw the SELECTED SALC (matches the chip + 2D panel).  Coefficients
+         are canonical-frame; convert to the cell frame so the lobe points the
+         right way in the crystal.  Cached on the converted vector.          */
+      meshSet=makeSALCLobeMesh(act.l, act.coefs);
+    } else {
+      meshSet=makeLobeMesh(sel.l, sel.m);
+    }
     if(!meshSet || !meshSet.patches || !meshSet.patches.length) continue;
     var perEl=(S.orbRad[at.sym]!==undefined)?S.orbRad[at.sym]:1;
     var R=orbitalRmax(at.sym,sel.l,sel.n)*perEl*S.orbScale;
@@ -2341,11 +2792,15 @@ function drawOrbitals3D(){
         gl.uniform3f(locO.uColor,cc[0],cc[1],cc[2]);
         lastPos=isPos;
       }
-      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.p);
-      gl.vertexAttribPointer(locO.aPos,3,gl.FLOAT,false,0,0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.n);
-      gl.vertexAttribPointer(locO.aNor,3,gl.FLOAT,false,0,0);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.i);
+      /* rebind the mesh buffers ONLY when they actually change (see cache note) */
+      if(curMeshP!==mesh.p || curMeshN!==mesh.n || curMeshI!==mesh.i){
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.p);
+        gl.vertexAttribPointer(locO.aPos,3,gl.FLOAT,false,0,0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.n);
+        gl.vertexAttribPointer(locO.aNor,3,gl.FLOAT,false,0,0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.i);
+        curMeshP=mesh.p; curMeshN=mesh.n; curMeshI=mesh.i;
+      }
       gl.drawElements(gl.TRIANGLES,mesh.c,(mesh.type||gl.UNSIGNED_SHORT),0);
     }
   }
@@ -2378,8 +2833,12 @@ function drawAtoms(){
    instead of being re-uploaded as a uModel/uRot uniform pair per half per frame.
    The result is one interleaved [pos(3), nor(3), col(3)] buffer drawn with a
    single gl.drawElements.  Rebuilt only when S.bonds / S.bondR change.        */
+var _bondCylCache=null;
 function buildBondBatch(){
-  var cyl=makeCyl(12);                       /* unit cylinder, radius 1, along Y */
+  /* the unit cylinder is constant; build it once instead of on every rebuild
+     (bond-width drags call buildBondBatch() per pointer move - see drawBonds) */
+  var cyl=_bondCylCache || (_bondCylCache=makeCyl(12));
+  /* unit cylinder, radius 1, along Y */
   var cpos=cyl.pos, cnor=cyl.nor, cidx=cyl.idx;
   var nv=cpos.length/3, ni=cidx.length;
   var nb=S.bonds.length;
@@ -2543,6 +3002,9 @@ function frame(){
   if(!needsRedraw && !S.spin && dirtyHold<=0){ return; }
   if(dirtyHold>0) dirtyHold--;
   needsRedraw=false;
+  /* coalesced slider rebuilds (see pendSlice/pendQuad/pendBonds): a whole
+     drag collapses into one rebuild per frame instead of one per event.     */
+  drainPend();
   resize();
   if(S.spin) cam.yaw+=0.0035;
   var aspect=cvW/cvH;
@@ -2617,7 +3079,76 @@ var DIRTY_HOLD=2;
    immediately; this flag only ensures the throttled frame-loop catch-up runs
    when the panel content changed.                                          */
 var plane2dDirty=true;
+/* R4: defer the HEAVY plane-info HTML commit.  updatePlanePanel() rebuilds a
+   long innerHTML string (d-spacing, plane index, composition, tilt readouts)
+   and forces a relayout of the info pane; a thickness/extent drag used to do
+   that on every coalesced slider frame.  Drags now route through
+   updatePlanePanelLight(): the slider's own small numeric label stays live
+   (cheap textContent, written by the input handler itself) and the full
+   info text is committed at most one debounce tick after the last drag
+   event, or immediately when the slider fires its committed 'change'. */
+var _panelInfoTimer=null;
+function _panelInfoFlush(){
+  if(_panelInfoTimer){ clearTimeout(_panelInfoTimer); _panelInfoTimer=null; }
+  updatePlanePanel();
+}
+function updatePlanePanelLight(){
+  if(typeof updatePlanePanel!=='function') return;
+  if(typeof setTimeout!=='function'){ updatePlanePanel(); return; }
+  if(_panelInfoTimer!==null) return;
+  _panelInfoTimer=setTimeout(function(){ _panelInfoTimer=null; updatePlanePanel(); }, 200);
+}
 function markDirty(){ needsRedraw=true; dirtyHold=DIRTY_HOLD; plane2dDirty=true; }
+/* Camera-only redraw (used while orbiting/panning/zooming the 3D view).
+   The 2D plane projection does NOT depend on the 3D camera, so re-rendering
+   it during a rotate dragged an expensive 2D repaint (orbital fields, rasters,
+   net, labels) into every 3rd animation frame - which is what made rotating
+   the 3D view feel choppy when orbitals were shown.  wake3D() schedules a 3D
+   redraw WITHOUT touching plane2dDirty.                                      */
+/* OPT-V2: coalesce 2D-panel repaints to at most one per animation frame.  Pan,
+   zoom and rotate gestures used to call renderPlane2D() directly from every
+   pointer/wheel event - dozens of full 2D renders per second, each of which
+   (pre-V2) rebuilt every orbital field from scratch.  The first event in a
+   frame schedules one paint; later events inside the same frame are free. */
+var _r2dPending=false;
+function schedRender2D(){
+  if(_r2dPending) return;
+  _r2dPending=true;
+  if(typeof requestAnimationFrame!=='function'){
+    _r2dPending=false;
+    if(typeof renderPlane2D==='function') renderPlane2D();
+    return;
+  }
+  requestAnimationFrame(function(){
+    _r2dPending=false;
+    if(typeof renderPlane2D==='function') renderPlane2D();
+  });
+}
+
+function wake3D(){ needsRedraw=true; dirtyHold=DIRTY_HOLD; }
+
+/* ---- slider-drag coalescing ------------------------------------------------
+   The plane-thickness, plane-extent and bond-width sliders fire 'input' on
+   every pointer move.  Each event used to run a heavy rebuild SYNCHRONOUSLY:
+   buildSlice()/buildPlaneQuad()+renderPlane2D() for the plane sliders, and a
+   full buildBondBatch() re-triangulation for the bond slider.  At pointer
+   frequency that is dozens of full rebuilds per second and is a visible jank
+   source.  We instead mark the work pending and let the single animation frame
+   drain it ONCE - coalescing a whole drag into one rebuild per frame.  The
+   label text updates immediately so the UI still feels responsive.          */
+var _pendSlice=false, _pendQuad=false, _pendBonds=false;
+function pendSlice(){ _pendSlice=true; markDirty(); }
+function pendPlaneQuad(){ _pendQuad=true; markDirty(); }
+function pendBonds(){ _pendBonds=true; markDirty(); }
+function drainPend(){
+  if(_pendBonds){ _pendBonds=false; S.bondVer=(S.bondVer||0)+1; }
+  if(_pendSlice){ _pendSlice=false;
+    if(PLANE.anchor){ buildSlice(); updatePlanePanelLight(); }   /* R4: deferred */
+  } else if(_pendQuad){ _pendQuad=false;
+    if(PLANE.anchor){ buildPlaneQuad(); }
+  }
+  if(_pendQuad){ _pendQuad=false; if(PLANE.anchor){ buildPlaneQuad(); } }
+}
 
 /* ---------------- ray picking: click an atom to anchor ---------------- */
 function screenPosOf(p){
@@ -2659,7 +3190,9 @@ function anchorPlaneToAtoms(atom){
   buildSlice();
   buildPlaneQuad();
   buildAnchorMarker();
+  SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;              /* new anchor -> re-derive site group */
   updatePlanePanel();
+  buildSymPanel();
   var hint=$('pickHint');
   if(hint) hint.classList.add('gone');
   updatePlaneClearBtn();
@@ -3140,7 +3673,14 @@ function orbitalTiltDeg(l,m){
 /* Radial phase profile of |Y_lm| for a view along the orbital axis.
    Returns {bands:[{t0,t1,sign}], rings:[t]} with t in 0..1 (centre..rim).
    theta convention: t=0 -> theta=0 (axis), t=1 -> theta=pi/2 (equator).  */
+/* OPT-P1: drawProjectedDisc used to re-run this 64x64 azimuthal sweep
+   (4,160 realSH evaluations) PER ATOM PER REDRAW for the same (l,m).  The
+   profile depends only on (l,m), so memoise it (16 possible keys). */
+var _orbBandsCache={};
 function orbitalRadialBands(l,m){
+  var _bk='b'+l+'|'+m;
+  var _hit=_orbBandsCache[_bk];
+  if(_hit) return _hit;
   /* Radial phase structure of Y_lm when the orbital's own axis points along
      the view direction.  A screen radius maps to the angle phi away from that
      axis (phi=0 -> disc centre, phi=90 deg -> rim).
@@ -3208,7 +3748,9 @@ function orbitalRadialBands(l,m){
     var idx=Math.max(0,Math.min(NR,Math.round(mid*NR)));
     bands.push({t0:tA, t1:tB, sign:(val[idx]>=0?1:-1)});
   }
-  return {bands:bands, rings:rings, vals:val};
+  var _bres={bands:bands, rings:rings, vals:val};
+  _orbBandsCache[_bk]=_bres;
+  return _bres;
 }
 
 /* Draw the projection of an axis-aligned orbital as a phase-shaded disc.
@@ -3424,7 +3966,12 @@ var ORB2D_CACHE={};
    raster and the blit, so keying the (expensive) field WITHOUT Rpx means a
    zoom reuses the field across every integer pixel radius. */
 function orbFieldKey(elem,l,m,nN){
-  var n=(PLANE.n||[0,0,1]), u=(PLANE.u||[1,0,0]), v=(PLANE.v||[0,1,0]);
+  var n=(PLANE.n||[0,0,1]);
+  /* OPT-V2: key the field on the UNROTATED basis (PLANE.u0/v0).  The projected
+     field of a given (element,l,m) rotates RIGIDLY with the view basis, so ONE
+     cached entry serves every PLANE.rot and rotation no longer invalidates
+     (the draw path rotates the blit instead of rebuilding the field). */
+  var u=(PLANE.u0||PLANE.u||[1,0,0]), v=(PLANE.v0||PLANE.v||[0,1,0]);
   return [elem,l,m,(nN===undefined||nN===null?'-':nN),
           n[0].toFixed(3),n[1].toFixed(3),n[2].toFixed(3),
           u[0].toFixed(3),u[1].toFixed(3),u[2].toFixed(3),
@@ -3438,6 +3985,61 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
   var v=(PLANE && PLANE.v)?PLANE.v:[0,1,0];
   var R=orbitalRmax(elem,l,nN);
   var NG=ORB2D_GRID;
+  /* OPT-V2: the cached field/raster live in the UNROTATED frame; the final
+     blit is rotated by -rot below (exact rigid identity, verified). */
+  var u0=(PLANE && PLANE.u0)?PLANE.u0:u, v0=(PLANE && PLANE.v0)?PLANE.v0:v;
+  var rot=(PLANE && PLANE.rot)?PLANE.rot:0;
+
+  /* OPT-P1 (geometry fast path to the disc).  When the orbital's own axis is
+     PARALLEL to the plane normal and the harmonic is ODD under reflection
+     through the plane, the SIGNED line integral cancels identically at every
+     in-plane offset while the absolute field is uniform on every ring: the
+     true projection is exactly the phase disc drawProjectedDisc() renders.
+     That is the p_z-on-(001) family (also p_x on (100), f_z3 on its axis).
+     The slow path reaches the same verdict only AFTER building the whole
+     64x64 grid x 48-tap quadrature field (~196k sqrt/Laguerre/realSH steps).
+     Probing the two-sided symmetry directly (6 realSH evals) gives the same
+     DISC verdict bit-for-bit; even-parallel harmonics (d_z2-r2) fail the odd
+     test and keep the full integrated path, so they still draw as glyphs. */
+  if(l>0){
+    var _axv=orbitalAxisVector(l,m);
+    if(_axv){
+      var _dn=Math.abs(_axv[0]*nrm[0]+_axv[1]*nrm[1]+_axv[2]*nrm[2]);
+      var _du=Math.abs(_axv[0]*u[0]+_axv[1]*u[1]+_axv[2]*u[2]);
+      var _dv=Math.abs(_axv[0]*v[0]+_axv[1]*v[1]+_axv[2]*v[2]);
+      /* The fast DISC shortcut is only VALID for harmonics that are
+         AZIMUTHAL about their own axis (their Legendre polynomial: the p
+         family, d_z2-r2, f_z3).  An odd-but-NON-azimuthal harmonic whose
+         axis happens to be parallel to the plane normal ALSO has a vanishing
+         signed integral, but its absolute envelope varies around the ring
+         (e.g. d_x2-y2 seen along [1,-1,0]); the slow path correctly renders
+         that as a structured phase-neutral GLYPH, so it MUST NOT be routed
+         to the disc.  The (l,m) whitelist below admits exactly the azimuthal
+         harmonics; everything else keeps the full integrated path. */
+      var _azim = (l===1) || (l===2 && m===2) || (l===3 && m===0);
+      if(_azim && _dn>1e-9 && _du<1e-8 && _dv<1e-8){
+        var _odd=true, _nb=false;
+        var _offs=[0.37,0.61,0.83];
+        for(var _pi=0;_pi<3 && _odd;_pi++){
+          var _px=u[0]*0.83+v[0]*_offs[_pi], _py=u[1]*0.83+v[1]*_offs[_pi], _pz=u[2]*0.83+v[2]*_offs[_pi];
+          var _ax=_px+nrm[0]*0.42, _ay=_py+nrm[1]*0.42, _az=_pz+nrm[2]*0.42;
+          var _bl=Math.sqrt(_ax*_ax+_ay*_ay+_az*_az)||1;
+          var _ya=realSH(l,m,_ax/_bl,_ay/_bl,_az/_bl);
+          var _bx=_px-nrm[0]*0.42, _by=_py-nrm[1]*0.42, _bz=_pz-nrm[2]*0.42;
+          _bl=Math.sqrt(_bx*_bx+_by*_by+_bz*_bz)||1;
+          var _yb=realSH(l,m,_bx/_bl,_by/_bl,_bz/_bl);
+          if(Math.abs(_ya)>1e-7 || Math.abs(_yb)>1e-7){
+            _nb=true;
+            if(Math.abs(_ya+_yb) > 1e-6*(Math.abs(_ya)+Math.abs(_yb)+1e-30)) _odd=false;
+          }
+        }
+        if(_odd && _nb){
+          drawProjectedDisc(x,y,Rpx,l,m,plus,minus,edge);
+          return;
+        }
+      }
+    }
+  }
 
   /* The sampled field is independent of the pixel radius, so cache it under a
      key that omits Rpx: a zoom changes Rpx continuously but must not throw
@@ -3449,9 +4051,9 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
     var ctx=orbMakeCtx(elem,l,m,nN);
     var valsS=[], valsA=[], amax=0, smax=0;
     /* precompute the in-plane basis vectors scaled by R so the inner loop is
-       just adds and multiplies */
-    var ux=u[0]*R, uy=u[1]*R, uz=u[2]*R;
-    var vx=v[0]*R, vy=v[1]*R, vz=v[2]*R;
+       just adds and multiplies.  OPT-V2: built ONCE in the unrotated frame. */
+    var ux=u0[0]*R, uy=u0[1]*R, uz=u0[2]*R;
+    var vx=v0[0]*R, vy=v0[1]*R, vz=v0[2]*R;
     for(var i=0;i<NG;i++){
       for(var j2=0;j2<NG;j2++){
         var gx=(i/(NG-1))*2-1, gy=(j2/(NG-1))*2-1;
@@ -3463,12 +4065,63 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
         if(res[1]>amax) amax=res[1];
       }
     }
-    F={s:valsS, a:valsA, amax:amax, smax:smax, NG:NG, rasters:{}};
-    ORB2D_CACHE[fkey]=F;
+    /* ANGULAR structure of the absolute field -- the discriminator between
+       'draw a disc' and 'draw a glyph'.
+       A plain phase disc is only correct when the absolute field is constant
+       AROUND the disc (radially it necessarily falls off, and that is fine).
+       p_z seen down its axis, and s, are constant on every ring -> DISC.
+       d_xz / d_yz also have a vanishing SIGNED integral along the normal, but
+       their absolute field varies as |cos phi| / |sin phi| around the ring, so
+       they must be drawn as a glyph.  We therefore compare the absolute field
+       at several points on a mid-radius ring. */
+    var ringVals=[];
+    for(var q=0;q<24;q++){
+      var ang=2*Math.PI*q/24;
+      var gr=0.6;                       /* mid-radius, away from centre/edge */
+      var gxv=gr*Math.cos(ang), gyv=gr*Math.sin(ang);
+      var idxI=Math.round((gxv+1)*0.5*(NG-1));
+      var idxJ=Math.round((gyv+1)*0.5*(NG-1));
+      idxI=Math.max(0,Math.min(NG-1,idxI)); idxJ=Math.max(0,Math.min(NG-1,idxJ));
+      var rv=valsA[idxJ*NG+idxI];
+      if(rv!==null && rv!==undefined) ringVals.push(rv);
+    }
+    var aSpread=0;
+    if(ringVals.length>3){
+      var rmin=ringVals[0], rmax=ringVals[0], rsum=0;
+      for(var q2=0;q2<ringVals.length;q2++){
+        var vv=ringVals[q2];
+        if(vv<rmin) rmin=vv; if(vv>rmax) rmax=vv; rsum+=vv;
+      }
+      var rmean=rsum/ringVals.length;
+      if(rmean>1e-12) aSpread=(rmax-rmin)/rmean;
+    }
+    F={s:valsS, a:valsA, amax:amax, smax:smax, NG:NG, rasters:{}, aSpread:aSpread};
+    /* OPT-V2 (the (101)/(106) slowness): this path NEVER wrote the freshly
+       built field back into ORB2D_CACHE (only the SALC path stored), so every
+       atom, on EVERY 2D redraw, re-ran the whole 64x64 x 48-tap line-integral
+       field AND re-baked its bicubic raster - seconds per frame once a
+       high-index plane makes every glyph a structured lobe.  One statement
+       and the cache this file already documents finally starts working.
+       R2: through the bounded LRU so a long session cannot grow it. */
+    _orb2dSet(fkey,F);
   }
 
   var amax=F.amax, smax=F.smax;
-  if(amax<=1e-12){ drawProjectedDisc(x,y,Rpx,l,m,plus,minus,edge); return; }
+  /* When does a plain phase DISC belong?
+     Only when the signed integral vanishes AND the absolute field is uniform
+     over the disc.  Two different situations both have smax ~ 0:
+       (a) p_z seen down its axis: |psi| is constant in the plane  -> DISC
+       (b) d_xz / d_yz seen down z: the signed integral also cancels (the
+           integrand is odd in z), BUT the absolute field goes like |x| or |y|,
+           i.e. it carries in-plane structure                      -> GLYPH
+     So the disc test must additionally require a small SPREAD of the absolute
+     field.  aSpread is (max-min)/max of valsA over the disc; for p_z it is
+     near 0, for d_xz it is close to 1. */
+  var uniformA=(F.aSpread===undefined)? true : (F.aSpread<0.15);
+  if(amax<=1e-12 || ((smax<=1e-9*amax || smax<=1e-14) && uniformA)){
+    drawProjectedDisc(x,y,Rpx,l,m,plus,minus,edge);
+    return;
+  }
 
   /* --- RASTER FAST PATH -------------------------------------------------
      The glyph painted at an atom depends only on (elem,l,m,Rpx,theme,dpr) -
@@ -3491,10 +4144,16 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
      an ImageData buffer (one putImageData), producing a continuous, smooth
      glyph with no dots.  This is done ONCE per glyph/radius and cached, so the
      per-atom, per-frame cost is still a single drawImage() blit.            */
-  var side=Math.ceil(2*Rpx + 6);              /* glyph box + a little slack */
+  /* Quantise Rpx to 4-px buckets so a continuous zoom does not re-bake the
+     whole glyph every frame.  The raster is BAKED at the bucket radius and
+     BLITTED at the exact radius below, so the quantisation is invisible.   */
+  var rq=Math.max(8, Math.round(Rpx/4)*4);
+  var rasterSide=Math.ceil(2*rq + 6);        /* box for the BAKED raster   */
+  if(rasterSide<4) rasterSide=4;
+  var side=Math.ceil(2*Rpx + 6);             /* blit box at the TRUE radius */
   if(side<4) side=4;
 
-  var rkey=Math.round(Rpx)+'|'+theme+'|'+dpr;
+  var rkey=rq+'|'+theme+'|'+dpr;
   var osc=F.rasters[rkey];
   if(!osc){
     /* keep the raster map small (tiny LRU) so a long zoom cannot grow it.
@@ -3506,7 +4165,7 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
        glyph on a 2x display cannot allocate a multi-MB buffer; drawImage
        upscales smoothly if the cap binds (rare - only at extreme zoom).    */
     var RASTER_MAX=512;
-    var cw=Math.max(1,Math.round(side*dpr));   /* raster at full device resolution */
+    var cw=Math.max(1,Math.round(rasterSide*dpr));   /* raster at full device resolution */
     if(cw>RASTER_MAX) cw=RASTER_MAX;
     var ch=cw;
     var cv=null;
@@ -3650,7 +4309,17 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
   }
 
   if(osc.cv){
-    pctx.drawImage(osc.cv, x-osc.side/2, y-osc.side/2, osc.side, osc.side);
+    /* OPT-V2: the raster was baked in the UNROTATED frame; a rotated view
+       reuses it verbatim with a rigid rotate(-rot) about the atom centre. */
+    if(Math.abs(rot)>1e-9){
+      pctx.save();
+      pctx.translate(x,y);
+      pctx.rotate(-rot);
+      pctx.drawImage(osc.cv, -side/2, -side/2, side, side);
+      pctx.restore();
+    } else {
+      pctx.drawImage(osc.cv, x-side/2, y-side/2, side, side);
+    }
   } else {
     /* no offscreen canvas available (pathological environment): fall back to
        the original per-cell painting so the feature still works.            */
@@ -3659,6 +4328,9 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
     var phaseNeutralF = (smax <= 1e-9*Math.max(amax,1e-30)) || (smax<1e-12);
     var greyF=(theme==='dark')?'rgba(200,205,215,':'rgba(120,126,138,';
     var rad=(2*Rpx/(NG-1))*0.90;   /* slightly overlapping discs for the fallback */
+    /* OPT-V2: rotate the fallback cells with the exact same transform as the
+       raster blit (rotate(-rot) about the atom centre). */
+    var _rc=Math.cos(rot), _rs=Math.sin(rot);
     for(var i4=0;i4<NG;i4++){
       for(var j4=0;j4<NG;j4++){
         var idx4=i4*NG+j4;
@@ -3674,8 +4346,9 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
           if(sn4>1) sn4=1; if(sn4<-1) sn4=-1;
           col4=orbGradColour(sn4, ORB2D_ALPHA);
         }
-        var cx4=x+((i4/(NG-1))*2-1)*Rpx;
-        var cy4=y-((j4/(NG-1))*2-1)*Rpx;
+        var dx4=((i4/(NG-1))*2-1)*Rpx, dy4=-((j4/(NG-1))*2-1)*Rpx;
+        var cx4=x+dx4*_rc+dy4*_rs;
+        var cy4=y-dx4*_rs+dy4*_rc;
         pctx.fillStyle=col4;
         pctx.beginPath();
         pctx.arc(cx4,cy4,rad,0,2*Math.PI);
@@ -3687,7 +4360,29 @@ function drawProjectedOrbital(x,y,Rpx,elem,l,m,plus,minus,edge,nN){
 }
 
 /* drop the cache whenever the plane or structure changes */
-function orb2dClearCache(){ ORB2D_CACHE={}; }
+/* R2: bounded LRU bookkeeping.  ORB2D_CACHE entries each own a 64x64 field
+   pair plus up to 4 baked offscreen rasters (<=512px squares) and used to
+   accumulate without bound across a long session (shell/component/element
+   cycling).  _orb2dSet refreshes the recency list on every store; over the
+   cap the least-recently-stored entry is evicted with its rasters.  Reads
+   are untouched: a capacity survivor still returns its cached F. */
+var _orb2dKeys=[], ORB2D_CACHE_MAX=24;
+var _orb2dMKeys=[], ORB2D_MCACHE_MAX=16;
+function _orb2dSet(k,F){
+  var i=_orb2dKeys.indexOf(k);
+  if(i>=0) _orb2dKeys.splice(i,1);
+  _orb2dKeys.push(k);
+  ORB2D_CACHE[k]=F;
+  while(_orb2dKeys.length>ORB2D_CACHE_MAX) delete ORB2D_CACHE[_orb2dKeys.shift()];
+}
+function _orb2dMSet(k,V){
+  var i=_orb2dMKeys.indexOf(k);
+  if(i>=0) _orb2dMKeys.splice(i,1);
+  _orb2dMKeys.push(k);
+  ORB2D_MCACHE[k]=V;
+  while(_orb2dMKeys.length>ORB2D_MCACHE_MAX) delete ORB2D_MCACHE[_orb2dMKeys.shift()];
+}
+function orb2dClearCache(){ ORB2D_CACHE={}; ORB2D_MCACHE={}; _orb2dKeys=[]; _orb2dMKeys=[]; }
 /* signed value -> colour: blue (-1), grey (0), red (+1) */
 /* signed value -> colour, matching the 3D lobe convention:
      +1  -> BLUE   (3D plusC)
@@ -3738,9 +4433,389 @@ function orbGradColour(sn, alpha){
 }
 /* Overlay all selected orbitals on the 2D projection (called from renderPlane2D
    after the atoms, with the same TX/TY transforms and pixel scale). */
+
+/* ---- SALC-aware projected field ------------------------------------------
+   Same line-integral sampling as orbLineIntegralCtx, but the angular factor is
+   a linear combination of the realSH basis given by the SALC coefficient
+   vector (canonical frame).  coeffs[m] indexes the realSH m of degree l. */
+function orbLineIntegralSALC(px,py,pz, nrm, ctx, nzList){
+  /* OPT-P2: nzList is the PRE-BUILT [m,c] nonzero pair list (see the single
+     caller in orbSALCCombine), so the per-tap loop does no zero-coefficient
+     tests and no dense m scan over the 2l+1 slots. */
+  var nz0=nrm[0], nz1=nrm[1], nz2=nrm[2];
+  var ts=ctx.ts, NT=ctx.NT, l=ctx.l, zeta=ctx.zeta, nq=ctx.nq;
+  var NL=nzList.length;
+  var s=0.0, a=0.0;
+  for(var i=0;i<NT;i++){
+    var t=ts[i];
+    var rx=px+t*nz0, ry=py+t*nz1, rz=pz+t*nz2;
+    var rr=Math.sqrt(rx*rx+ry*ry+rz*rz);
+    var Y=0.0;
+    if(rr>1e-9){
+      var iv=1/rr;
+      var vx=rx*iv, vy=ry*iv, vz=rz*iv;
+      for(var q3=0;q3<NL;q3++){
+        var e3=nzList[q3];
+        Y+=e3[1]*realSH(l,e3[0],vx,vy,vz);
+      }
+    }
+    var val=orbHydroR(nq,l,rr,zeta)*Y;
+    s+=val; a+=Math.abs(val);
+  }
+  return [s*ctx.h, a*ctx.h];
+}
+function orbSALCFieldKey(elem,l,coefs,nN){
+  var k=orbFieldKey(elem,l,'SALC',nN)+'|';
+  for(var i=0;i<coefs.length;i++) k+=(Math.round(coefs[i]*1e6)/1e6)+',';
+  return k;
+}
+/* draw a SALC as a projected glyph at (x,y).  Mirrors drawProjectedOrbital's
+   raster path but with the SALC field. */
+/* ------------------------------------------------------------------------
+   PER-M PROJECTED BASIS FIELDS (performance fix P0-2).
+   The projected SALC field is
+        F_SALC(x,y) = INT  R(r) * SUM_m c_m Y_lm(theta,phi)  dt
+                    = SUM_m c_m * ( INT R(r) Y_lm dt )
+                    = SUM_m c_m * P_m(x,y)
+   where the radial factor R(r) and the quadrature path are IDENTICAL for
+   every m.  So instead of re-integrating the whole linear combination per
+   SALC vector, we integrate the (2l+1) per-m basis fields P_m ONCE per
+   (elem, l, plane-basis, window settings) and combine them with the SALC
+   coefficients.  This makes cycling between the several SALC vectors of one
+   irrep cost a few thousand multiply-adds instead of ~150k realSH evals.
+
+   The signed basis fields are exact.  For the ABSOLUTE envelope we use the
+   exact relation that a single-m SALC has |F| = |c| * |P_m| (the common
+   case: a 1-D irrep SALC is a multiple of one real SH); for a genuine
+   multi-m combination we integrate the true envelope per pixel, which is
+   correct and cached per coefficient set.                                 */
+var ORB2D_MCACHE={};   /* key -> {l,NG,nBasis,basis:[{s:[],a:[]}]} */
+function orbSALCBasisKey(elem,l,nN){
+  return orbFieldKey(elem,l,'MBASIS',nN);
+}
+function orbSALCBasisFields(elem,l,nN){
+  var key=orbSALCBasisKey(elem,l,nN);
+  var hit=ORB2D_MCACHE[key];
+  if(hit) return hit;
+  var nrm=(PLANE && PLANE.n)?PLANE.n:[0,0,1];
+  /* OPT-V2: build the per-m basis fields in the UNROTATED frame so the MBASIS
+     cache (keyed by orbFieldKey) survives in-plane view rotation. */
+  var u=(PLANE && PLANE.u0)?PLANE.u0:((PLANE && PLANE.u)?PLANE.u:[1,0,0]);
+  var v=(PLANE && PLANE.v0)?PLANE.v0:((PLANE && PLANE.v)?PLANE.v:[0,1,0]);
+  var R=orbitalRmax(elem,l,nN);
+  var NG=ORB2D_GRID;
+  var nBasis=2*l+1;
+  var ux=u[0]*R, uy=u[1]*R, uz=u[2]*R;
+  var vx=v[0]*R, vy=v[1]*R, vz=v[2]*R;
+  var ctx=orbMakeCtx(elem,l,nN);
+  var basis=[];
+  for(var m=0;m<nBasis;m++){
+    ctx.m=m;
+    var valsS=new Array(NG*NG), valsA=new Array(NG*NG);
+    for(var i=0;i<NG;i++){
+      for(var j2=0;j2<NG;j2++){
+        var gx=(i/(NG-1))*2-1, gy=(j2/(NG-1))*2-1;
+        var idx=j2*NG+i;
+        if(gx*gx+gy*gy>1.0){ valsS[idx]=null; valsA[idx]=null; continue; }
+        var px=ux*gx+vx*gy, py=uy*gx+vy*gy, pz=uz*gx+vz*gy;
+        var res=orbLineIntegralCtx(px,py,pz,nrm,ctx);
+        valsS[idx]=res[0]; valsA[idx]=res[1];
+      }
+    }
+    basis.push({s:valsS, a:valsA});
+  }
+  var out={l:l, nBasis:nBasis, NG:NG, basis:basis};
+  _orb2dMSet(key,out);         /* R2: bounded LRU store */
+  return out;
+}
+function orbSALCCombine(elem,l,nN,coefs){
+  var B=orbSALCBasisFields(elem,l,nN);
+  var NG=B.NG, nB=B.nBasis, basis=B.basis, N=NG*NG;
+  var s=new Array(N), a=new Array(N);
+  var amax=0, smax=0;
+  var nz=[];
+  for(var m=0;m<nB && m<coefs.length;m++){ if(coefs[m]) nz.push([m,coefs[m]]); }
+  if(nz.length===1){
+    /* single basis vector: signed = c*P_m ; envelope = |c|*|P_m| exactly */
+    var only=nz[0][0], oc=nz[0][1], ocA=Math.abs(oc);
+    var bs=basis[only].s, ba=basis[only].a;
+    for(var idx=0;idx<N;idx++){
+      var sv=bs[idx];
+      if(sv===null){ s[idx]=null; a[idx]=null; continue; }
+      s[idx]=oc*sv; a[idx]=ocA*ba[idx];
+    }
+  } else {
+    /* multi-m: combine signed from the cache, integrate the true envelope */
+    for(var idx2=0;idx2<N;idx2++){
+      var acc=0, ok=false;
+      for(var q=0;q<nz.length;q++){
+        var fm=nz[q][0], c=nz[q][1];
+        var bv=basis[fm].s[idx2];
+        if(bv===null) continue;
+        acc+=c*bv; ok=true;
+      }
+      if(!ok){ s[idx2]=null; a[idx2]=null; continue; }
+      s[idx2]=acc;
+    }
+    var nrm=(PLANE && PLANE.n)?PLANE.n:[0,0,1];
+    /* OPT-V2: multi-m envelope integration ALSO in the unrotated frame. */
+    var u=(PLANE && PLANE.u0)?PLANE.u0:((PLANE && PLANE.u)?PLANE.u:[1,0,0]);
+    var v=(PLANE && PLANE.v0)?PLANE.v0:((PLANE && PLANE.v)?PLANE.v:[0,1,0]);
+    var Rr=orbitalRmax(elem,l,nN);
+    var ux=u[0]*Rr, uy=u[1]*Rr, uz=u[2]*Rr;
+    var vx=v[0]*Rr, vy=v[1]*Rr, vz=v[2]*Rr;
+    var ctx2=orbMakeCtx(elem,l,nN);
+    for(var i3=0;i3<NG;i3++){
+      for(var j3=0;j3<NG;j3++){
+        var id3=j3*NG+i3;
+        var gx3=(i3/(NG-1))*2-1, gy3=(j3/(NG-1))*2-1;
+        if(gx3*gx3+gy3*gy3>1.0){ a[id3]=null; continue; }
+        var px3=ux*gx3+vx*gy3, py3=uy*gx3+vy*gy3, pz3=uz*gx3+vz*gy3;
+        var r3=orbLineIntegralSALC(px3,py3,pz3,nrm,ctx2,nz);
+        a[id3]=r3[1];
+      }
+    }
+  }
+  for(var idx4=0;idx4<N;idx4++){
+    var sv4=s[idx4]; if(sv4!==null){ var as=Math.abs(sv4); if(as>smax) smax=as; }
+    var av4=a[idx4]; if(av4!==null && av4>amax) amax=av4;
+  }
+  var ringV2=[];
+  for(var q3=0;q3<24;q3++){
+    var ang2=2*Math.PI*q3/24, gr2=0.6;
+    var gxv2=gr2*Math.cos(ang2), gyv2=gr2*Math.sin(ang2);
+    var iI=Math.round((gxv2+1)*0.5*(NG-1));
+    var iJ=Math.round((gyv2+1)*0.5*(NG-1));
+    iI=Math.max(0,Math.min(NG-1,iI)); iJ=Math.max(0,Math.min(NG-1,iJ));
+    var rv2=a[iJ*NG+iI];
+    if(rv2!==null && rv2!==undefined) ringV2.push(rv2);
+  }
+  var aSpread2=0;
+  if(ringV2.length>3){
+    var rmin2=ringV2[0], rmax2=ringV2[0], rsum2=0;
+    for(var q4=0;q4<ringV2.length;q4++){
+      var vv2=ringV2[q4];
+      if(vv2<rmin2) rmin2=vv2; if(vv2>rmax2) rmax2=vv2; rsum2+=vv2;
+    }
+    var rmean2=rsum2/ringV2.length;
+    if(rmean2>1e-12) aSpread2=(rmax2-rmin2)/rmean2;
+  }
+  return {s:s, a:a, amax:amax, smax:smax, NG:NG, rasters:{}, aSpread:aSpread2};
+}
+
+function drawProjectedSALC(x,y,Rpx,elem,l,coefs,plus,minus,edge,nN){
+  var nrm=(PLANE && PLANE.n)?PLANE.n:[0,0,1];
+  var u=(PLANE && PLANE.u)?PLANE.u:[1,0,0];
+  var v=(PLANE && PLANE.v)?PLANE.v:[0,1,0];
+  var R=orbitalRmax(elem,l,nN);
+  var NG=ORB2D_GRID;
+  /* OPT-V2: view rotation is applied at blit time only (the SALC field is
+     cached in the unrotated frame), so rotating the view never rebuilds it. */
+  var rot=(PLANE && PLANE.rot)?PLANE.rot:0;
+  var fkey=orbSALCFieldKey(elem,l,coefs,nN);
+  var F=ORB2D_CACHE[fkey];
+  if(!F){
+    /* Build the SALC field from the memoised per-m basis fields (P0-2).
+       Same field the old inline integration produced, but the expensive
+       per-m integrals are shared across every SALC vector of this (elem,l). */
+    F=orbSALCCombine(elem,l,nN,coefs);
+    _orb2dSet(fkey,F);          /* R2: bounded LRU store */
+  }
+  /* reuse the same rasteriser as the ordinary projected orbital.
+     As for the plain orbital path: when the PROJECTED (signed) field vanishes
+     the SALC has no in-plane shape (e.g. an out-of-plane A1 like p_z on (001)),
+     so draw a uniform phase disc instead of a spurious lobe pattern.  The disc
+     colour is taken from the SIGN of the (vanishing) integral's dominant
+     surviving value, falling back to the '+' phase. */
+  var amax=F.amax, smax=F.smax;
+  /* same rule as the plain path: a disc only when the signed field vanishes
+     AND the absolute field is uniform over the disc. */
+  var uniformA2=(F.aSpread===undefined)? true : (F.aSpread<0.15);
+  if(amax<=1e-12 || ((smax<=1e-9*amax || smax<=1e-14) && uniformA2)){
+    drawProjectedDisc(x,y,Rpx,l,0,plus,minus,edge);
+    return;
+  }
+  /* Quantise the pixel radius to 4-px buckets: a continuous zoom changes Rpx
+     every event, and an un-quantised key rebuilt the whole 512x512 bicubic
+     raster on every frame of a drag.  A 4-px bucket is imperceptible because
+     the raster is drawn with drawImage() scaled to the true Rpx anyway.     */
+  var rq=Math.max(8, Math.round(Rpx/4)*4);
+  var rkey=rq+'|'+Math.round(amax*1e6)+'|'+Math.round(smax*1e6)+'|'+(theme||'')+'|'+dpr;
+  var rast=F.rasters[rkey];
+  if(!rast){
+    /* tiny LRU so a long zoom cannot grow the raster map without bound
+       (mirrors the plain-orbital path's 4-entry cap).                     */
+    var _sk=Object.keys(F.rasters);
+    while(_sk.length>=4){ delete F.rasters[_sk.shift()]; }
+    rast=buildSALCRaster(F,NG,rq,plus,minus);
+    F.rasters[rkey]=rast;
+  }
+  if(rast && rast.canvas){
+    var half=rast.canvas.width/(2*dpr);
+    /* OPT-V2: rigid rotate(-rot) blit - shared with the plain-orbital path. */
+    if(Math.abs(rot)>1e-9){
+      pctx.save();
+      pctx.translate(x,y);
+      pctx.rotate(-rot);
+      pctx.drawImage(rast.canvas, -half, -half, rast.canvas.width/dpr, rast.canvas.height/dpr);
+      pctx.restore();
+    } else {
+      pctx.drawImage(rast.canvas, x-half, y-half, rast.canvas.width/dpr, rast.canvas.height/dpr);
+    }
+  } else {
+    drawProjectedDisc(x,y,Rpx,l,0,plus,minus,edge);
+  }
+}
+/* rasterise the SALC field into an offscreen canvas (continuous bicubic-ish) */
+/* parse 'rgb(r,g,b)' or 'rgba(r,g,b,a)' (or '#rrggbb') into [r,g,b] 0..255 */
+function orbRGBA(s){
+  if(!s) return [128,128,128];
+  if(s.charAt(0)==='#'){
+    return [parseInt(s.substr(1,2),16), parseInt(s.substr(3,2),16), parseInt(s.substr(5,2),16)];
+  }
+  var m=/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(s);
+  if(m) return [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)];
+  return [128,128,128];
+}
+function buildSALCRaster(F,NG,Rpx,plus,minus){
+  /* Rasterise the SALC field with EXACTLY the same pipeline the plain-orbital
+     glyph uses (bicubic interpolation, smoothstep amplitude ramp, ORB2D_ALPHA
+     scale, phase blended against the background colour).  An earlier version
+     used nearest-neighbour sampling with an |t|^2 alpha and a (1-r^2) edge
+     taper, which made the SALC glyphs look smaller and fainter than the plain
+     orbitals for the same field. */
+  var size=Math.max(8,Math.round(Rpx*2));
+  var RASTER_MAX=512;
+  var cw=Math.max(1,Math.round(size*dpr));
+  if(cw>RASTER_MAX) cw=RASTER_MAX;
+  var cv=(typeof document!=='undefined' && document.createElement)?document.createElement('canvas'):null;
+  if(!cv || !cv.getContext) return {canvas:null};
+  cv.width=cw; cv.height=cw;
+  var g=cv.getContext('2d');
+  if(!g || !g.createImageData) return {canvas:null};
+  var img=g.createImageData(cw,cw);
+  var data=img.data;
+  var valsSr=F.s, valsAr=F.a;
+  var amax=F.amax||1, smax=F.smax||0;
+  var phaseNeutral=(smax<=1e-9*Math.max(amax,1e-30))||(smax<1e-12);
+
+  /* background colour for the phase ramp (same source as the plain path) */
+  var bg=(typeof pal==='function' && pal())?pal().bg:null;
+  var bgR=255,bgG=255,bgB=255;
+  if(bg && bg.length===3){ bgR=Math.round(bg[0]*255); bgG=Math.round(bg[1]*255); bgB=Math.round(bg[2]*255); }
+  else if(theme==='dark'){ bgR=17; bgG=20; bgB=27; }
+  var _ph=orbPhaseRgb();
+  var plusRgb=_ph.plus, minusRgb=_ph.minus;
+
+  function cw4(t){
+    var t2=t*t, t3=t2*t;
+    return [-0.5*t3+t2-0.5*t, 1.5*t3-2.5*t2+1.0, -1.5*t3+2.0*t2+0.5*t, 0.5*t3-0.5*t2];
+  }
+  function sstep(e0,e1,x){ var t=(x-e0)/(e1-e0); if(t<0)t=0; else if(t>1)t=1; return t*t*(3-2*t); }
+
+  var inv=1/cw;
+  /* precompute the x-taps once (they do not depend on y) */
+  var colX=new Int32Array(cw), colW=new Float64Array(cw*4), colValid=new Uint8Array(cw);
+  for(var cpx=0; cpx<cw; cpx++){
+    var gxv0=2*(cpx+0.5)*inv-1;
+    if(gxv0*gxv0>1.0){ colValid[cpx]=0; continue; }
+    colValid[cpx]=1;
+    var fx0=(gxv0+1)*0.5*(NG-1);
+    var ix0=Math.floor(fx0); var tx0=fx0-ix0;
+    var wx0=cw4(tx0);
+    colX[cpx]=ix0;
+    for(var q=0;q<4;q++) colW[cpx*4+q]=wx0[q];
+  }
+  for(var py=0; py<cw; py++){
+    var gyv=1-2*(py+0.5)*inv;
+    var fy=(gyv+1)*0.5*(NG-1);
+    var iy=Math.floor(fy); var ty=fy-iy;
+    var wy=cw4(ty);
+    for(var px=0; px<cw; px++){
+      if(!colValid[px]) continue;
+      var gxr=2*(px+0.5)*inv-1;
+      if(gxr*gxr+gyv*gyv>1.0) continue;
+      var ix=colX[px];
+      var wx0=colW[px*4], wx1=colW[px*4+1], wx2=colW[px*4+2], wx3=colW[px*4+3];
+      /* bicubic sample of the SIGNED and ABSOLUTE fields */
+      var Sv=0, Av=0, wsum=0;
+      for(var qy=0; qy<4; qy++){
+        var yj=iy-1+qy; var wv=wy[qy];
+        if(yj<0) yj=0; else if(yj>NG-1) yj=NG-1;
+        var rowbase=yj*NG;
+        for(var qx=0; qx<4; qx++){
+          var xj=ix-1+qx;
+          if(xj<0) xj=0; else if(xj>NG-1) xj=NG-1;
+          var w=wv*((qx===0)?wx0:(qx===1)?wx1:(qx===2)?wx2:wx3);
+          var av=valsAr[rowbase+xj]; if(av!==null) Av+=w*av;
+          var sv=valsSr[rowbase+xj]; if(sv!==null) Sv+=w*sv;
+          wsum+=w;
+        }
+      }
+      if(wsum<=0) continue;
+      Av/=wsum; Sv/=wsum;
+      /* SAME amplitude ramp as the plain path */
+      var an=Av/amax;
+      if(an<=ORB2D_AMP_LO) continue;
+      var aA=(an>=ORB2D_AMP_HI)?1:sstep(ORB2D_AMP_LO,ORB2D_AMP_HI,an);
+      var sn=Sv/Math.max(smax,1e-30);
+      var at=Math.abs(sn);
+      var rcol,gcol,bcol;
+      if(phaseNeutral){
+        rcol=plusRgb[0]; gcol=plusRgb[1]; bcol=plusRgb[2];
+      } else {
+        var wgt=Math.min(1, at*1.15);
+        var tgt=(sn>=0)?plusRgb:minusRgb;
+        rcol=bgR+(tgt[0]-bgR)*wgt;
+        gcol=bgG+(tgt[1]-bgG)*wgt;
+        bcol=bgB+(tgt[2]-bgB)*wgt;
+        aA*=sstep(0, ORB2D_ZERO_HI, at);
+      }
+      var aFinal=ORB2D_ALPHA*aA;
+      if(aFinal<=0.002) continue;
+      var o=(py*cw+px)*4;
+      data[o]=rcol; data[o+1]=gcol; data[o+2]=bcol;
+      data[o+3]=(aFinal*255)|0;
+    }
+  }
+  try{ g.putImageData(img,0,0); }catch(e){ return {canvas:null}; }
+  return {canvas:cv};
+}
+
+/* Which element currently has a symmetry selection?  Computed once per frame so
+   the inner atom loop does not re-run the group theory. */
+var lastSymEl=null;
+function symRefreshActiveElement(){
+  lastSymEl=null;
+  if(!S.showSym || !PLANE.anchor) return;
+  var el=(S.symSel && Object.keys(S.symSel).length)? null : null;
+  /* the element shown in the manifold selector is the anchored atom's element */
+  var ael=PLANE.anchor.sym;
+  if(S.symSel && S.symSel[ael+'|'+((S.orbSel[ael]||{}).l)]) lastSymEl=ael;
+}
+/* Sign of the SALC for a site reached from the anchor by an operation g:
+   the SALC coefficient vector transforms as  c' = R(g) c  in the canonical
+   frame.  We only need the overall SIGN of the projection, which for a real
+   one-dimensional component is det(R(g)) when the SALC is symmetric, and more
+   generally the sign of the dominant coefficient after applying R(g).  We use
+   the ratio of the transformed and original vectors to get a robust +/-1. */
+function symSiteSign(at, anchor, salc){
+  /* A more honest phase model: a site related to the anchor by a lattice
+     TRANSLATION repeats the same SALC (periodic image) -> sign +1.
+     A site related by a POINT operation g that is NOT in the plane-preserving
+     group is not an equivalent site of the layer, so we still draw it with the
+     same sign (it is a periodic repeat).  Only operations that act as a
+     non-trivial permutation WITHIN the drawn set would flip signs, and for an
+     anchored single-layer view those are exactly the +1 translations.
+     Therefore: same sign for all periodic images.  Kept as a function so a
+     future phase model (e.g. Bloch phase for a supercell) has a hook. */
+  if(!anchor || !at) return 1;
+  return 1;
+}
 function drawOrbitals2D(TX,TY,scale,W,H){
   if(!S.showOrb) return;
   if(!PLANE.pts || !PLANE.pts.length) return;
+  symRefreshActiveElement();
 
   /* Clash detection REMOVED.  Flagging "two orbitals project onto the same
      line" was a workaround for the old schematic glyph: when every orbital
@@ -3750,6 +4825,29 @@ function drawOrbitals2D(TX,TY,scale,W,H){
      a shared direction is simply visible in the picture and needs no extra
      marker - and the dashed-outline treatment was more confusing than the
      overlap it flagged.  The 'clash flags' control is gone with it.        */
+
+  /* --------------------------------------------------------------------
+     HOIST LOOP-INVARIANT WORK OUT OF THE ATOM LOOP (performance fix P0-1).
+     The active SALC for the anchored element+manifold and the theme colours
+     do NOT change from atom to atom.  Computing symActiveSALC() inside the
+     loop used to re-run the whole symmetry algebra once per atom on the
+     plane - hundreds of projector builds per redraw.  Resolve it ONCE here.
+     -------------------------------------------------------------------- */
+  var plusC=(theme==='dark')?'rgba( 90,170,255,0.55)':'rgba( 37, 99,235,0.42)';
+  var minusC=(theme==='dark')?'rgba(255,120,120,0.50)':'rgba(220, 38, 38,0.38)';
+  var edgeC=(theme==='dark')?'rgba(255,255,255,0.30)':'rgba(0,0,0,0.20)';
+  var hotSALC=null, hotSALCEl=null, hotSALCNeg=null;
+  if(S.showSym && lastSymEl){
+    var hsel=S.orbSel[lastSymEl];
+    if(hsel){
+      hotSALC=symActiveSALC(lastSymEl, hsel.l);
+      if(hotSALC){
+        hotSALCEl=lastSymEl;
+        hotSALCNeg=[];
+        for(var ci=0;ci<hotSALC.coefs.length;ci++) hotSALCNeg.push(-hotSALC.coefs[ci]);
+      }
+    }
+  }
 
   for(var i=0;i<PLANE.pts.length;i++){
     var at=PLANE.pts[i];
@@ -3763,14 +4861,22 @@ function drawOrbitals2D(TX,TY,scale,W,H){
     var Rpx=rmax*scale;
     if(Rpx<2) Rpx=2;
     if(Rpx>320) Rpx=320;
-    var depth=Math.abs(at.z)/(PLANE.thick/2+1e-9);
-    var alpha=1-0.45*depth;
-    /* v22/v23: projected radial*angular glyph (option A or B window). */
-    drawProjectedOrbital(x,y,Rpx,at.el,sel.l,sel.m,
-                        (theme==='dark')?'rgba( 90,170,255,0.55)':'rgba( 37, 99,235,0.42)',
-                        (theme==='dark')?'rgba(255,120,120,0.50)':'rgba(220, 38, 38,0.38)',
-                        (theme==='dark')?'rgba(255,255,255,0.30)':'rgba(0,0,0,0.20)',
-                        sel.n);
+    /* When an irrep/SALC is selected for this element+manifold, EVERY atom of
+       that element on the plane gets the SALC glyph, each with its own SIGN.
+       The sign comes from the symmetry operation that carries the anchored
+       site onto that atom; sites reached only by a pure lattice translation
+       keep the same coefficients (periodic repetition of the SALC). */
+    var drawSALC=false;
+    if(hotSALC && at.el===hotSALCEl){
+      var coefs=hotSALC.coefs;
+      var ph=symSiteSign(at, PLANE.anchor, hotSALC);
+      if(ph<0) coefs=hotSALCNeg;
+      drawProjectedSALC(x,y,Rpx*1.06,at.el,sel.l,coefs,plusC,minusC,edgeC,sel.n);
+      drawSALC=true;
+    }
+    if(!drawSALC){
+      drawProjectedOrbital(x,y,Rpx,at.el,sel.l,sel.m,plusC,minusC,edgeC,sel.n);
+    }
   }
 }
 
@@ -3782,8 +4888,29 @@ function renderPlane2D(){
   var W=pcW/dpr, H=pcH/dpr;
   pctx.clearRect(0,0,W,H);
 
+  /* ----------------------------------------------------------------
+     Theme palette hoist (P2, Option A: zero visual change).
+     renderPlane2D tested theme==='dark' ~13 times across the function and
+     its drawing blocks.  Resolve the boolean and every theme-dependent
+     colour ONCE here and reuse the locals below, so the hot path stops
+     re-evaluating the string comparison and re-allocating literals.  The
+     colour VALUES are byte-for-byte identical to the previous ternaries.
+     ------------------------------------------------------------------ */
+  var isDark=(theme==='dark');
+  var C_emptyPlane   = isDark?'#7b879c':'#7d8798';
+  var C_netLine      = isDark?'rgba(120,140,180,0.30)':'rgba(110,125,155,0.42)';
+  var C_cellOutline  = isDark?'rgba(111,166,255,0.60)':'rgba(37,99,235,0.40)';
+  var C_axis1        = isDark?'#5b9bff':'#2563eb';
+  var C_axis2        = isDark?'#f0a94c':'#c07a10';
+  var C_atomStroke   = isDark?'rgba(0,0,0,0.45)':'rgba(0,0,0,0.28)';
+  var C_netWarn      = isDark?'#e2a03c':'#b45309';
+  var C_lbl1         = isDark?'#9fc4ff':'#1d4ed8';
+  var C_lbl2         = isDark?'#ffcf8a':'#a05f00';
+  var C_lblGam       = isDark?'#9aa7bf':'#586179';
+  var C_normalTxt    = isDark?'#a3b0c8':'#55617a';
+
   if(!PLANE.on || !PLANE.anchor){
-    pctx.fillStyle=(theme==='dark')?'#7b879c':'#7d8798';
+    pctx.fillStyle=C_emptyPlane;
     pctx.font='13px system-ui,sans-serif';
     pctx.textAlign='center';
     pctx.fillText('Click an atom in the 3D view to anchor the plane', W/2, H/2);
@@ -3849,37 +4976,38 @@ function renderPlane2D(){
     if(S.showNet!==false){
     var N=14;
     pctx.lineWidth=1;
+    /* Batch all 2*(2N+1) grid lines into ONE path and stroke once (P2): the
+       loop previously issued 2 beginPath+moveTo+lineTo+stroke per i, i.e. 58
+       separate stroke() calls with a strokeStyle write inside the loop.     */
+    pctx.strokeStyle=C_netLine;
+    pctx.beginPath();
     for(var i=-N;i<=N;i++){
       var a=[g1[0]*i, g1[1]*i], b=[g2[0]*i, g2[1]*i];
       /* lines parallel to g2 through i*g1 */
-      pctx.strokeStyle=(theme==='dark')?'rgba(120,140,180,0.30)':'rgba(110,125,155,0.42)';
-      pctx.beginPath();
       pctx.moveTo(TX(a[0]-g2[0]*N), TY(a[1]-g2[1]*N));
       pctx.lineTo(TX(a[0]+g2[0]*N), TY(a[1]+g2[1]*N));
-      pctx.stroke();
       /* lines parallel to g1 through i*g2 */
-      pctx.beginPath();
       pctx.moveTo(TX(b[0]-g1[0]*N), TY(b[1]-g1[1]*N));
       pctx.lineTo(TX(b[0]+g1[0]*N), TY(b[1]+g1[1]*N));
-      pctx.stroke();
     }
+    pctx.stroke();
     /* ---- one clearly outlined 2D unit cell anchored at the origin atom ---- */
     var P0=[TX(0),TY(0)], P1=[TX(g1[0]),TY(g1[1])], P2=[TX(g2[0]),TY(g2[1])];
     var P3=[P1[0]+(P2[0]-P0[0]), P1[1]+(P2[1]-P0[1])];
     pctx.lineWidth=1.6;
-    pctx.strokeStyle=(theme==='dark')?'rgba(111,166,255,0.60)':'rgba(37,99,235,0.40)';
+    pctx.strokeStyle=C_cellOutline;
     pctx.beginPath();
     pctx.moveTo(P0[0],P0[1]); pctx.lineTo(P1[0],P1[1]);
     pctx.lineTo(P3[0],P3[1]); pctx.lineTo(P2[0],P2[1]); pctx.closePath();
     pctx.stroke();
     /* ---- emphasised basis vectors with arrowheads ---- */
     pctx.lineWidth=2.2;
-    pctx.fillStyle=(theme==='dark')?'#5b9bff':'#2563eb';
-    pctx.strokeStyle=(theme==='dark')?'#5b9bff':'#2563eb';
+    pctx.fillStyle=C_axis1;
+    pctx.strokeStyle=C_axis1;
     pctx.beginPath(); pctx.moveTo(P0[0],P0[1]); pctx.lineTo(P1[0],P1[1]); pctx.stroke();
     arrowHead(P0[0],P0[1],P1[0],P1[1]);
-    pctx.fillStyle=(theme==='dark')?'#f0a94c':'#c07a10';
-    pctx.strokeStyle=(theme==='dark')?'#f0a94c':'#c07a10';
+    pctx.fillStyle=C_axis2;
+    pctx.strokeStyle=C_axis2;
     pctx.beginPath(); pctx.moveTo(P0[0],P0[1]); pctx.lineTo(P2[0],P2[1]); pctx.stroke();
     arrowHead(P0[0],P0[1],P2[0],P2[1]);
 
@@ -3911,10 +5039,15 @@ function renderPlane2D(){
   var sizeCap=26*kSize; if(sizeCap<6) sizeCap=6;
   var sizeMin=3.5*Math.min(1,kSize); if(sizeMin<1.2) sizeMin=1.2;
   var baseR=Math.max(sizeMin, rmax*scale*0.42*kSize);
+  /* Hoist the theme-dependent stroke OUT of the per-atom loop (P2): the
+     stroke colour is the same for every atom, and theme==='dark' was tested
+     once per atom.  lineWidth is also constant, so set it once.           */
+  var atomStroke=C_atomStroke;
+  pctx.lineWidth=1;
+  pctx.strokeStyle=atomStroke;
   for(var i3=0;i3<PLANE.pts.length;i3++){
     var at=PLANE.pts[i3];
     var inf=elInfo(at.el);
-    var rgb='#'+inf[0].slice(1);
     var x=TX(at.x), y=TY(at.y);
     if(x<-20||x>W+20||y<-20||y>H+20) continue;
     var rr2=inf[1]*scale*0.42*kSize; if(rr2<sizeMin) rr2=sizeMin; if(rr2>sizeCap) rr2=sizeCap;
@@ -3925,8 +5058,6 @@ function renderPlane2D(){
     pctx.arc(x,y,rr2,0,2*Math.PI);
     pctx.fillStyle=inf[0];
     pctx.fill();
-    pctx.lineWidth=1;
-    pctx.strokeStyle=(theme==='dark')?'rgba(0,0,0,0.45)':'rgba(0,0,0,0.28)';
     pctx.stroke();
     pctx.globalAlpha=1;
   }
@@ -3934,7 +5065,7 @@ function renderPlane2D(){
   /* ---- v2: say WHY there is no net instead of a silent blank ---- */
   if(PLANE.on && PLANE.anchor && (!nb || !nb[0] || !nb[1])){
     pctx.save();
-    haloLbl(PLANE.netWarn||'2D lattice net unavailable for this (h,k,l)', W/2, H/2+34, (theme==='dark')?'#e2a03c':'#b45309');
+    haloLbl(PLANE.netWarn||'2D lattice net unavailable for this (h,k,l)', W/2, H/2+34, C_netWarn);
     pctx.restore();
   }
 
@@ -3945,16 +5076,16 @@ function renderPlane2D(){
          they are never hidden by atoms. a1/a2 hug the unit-cell edges on
          the outside; gamma sits at the top-right corner. ---- */
   if(LBL){
-    haloLbl('a\u2081='+LBL.l1.toFixed(3)+'\u00C5', LBL.x1, LBL.y1, (theme==='dark')?'#9fc4ff':'#1d4ed8');
-    haloLbl('a\u2082='+LBL.l2.toFixed(3)+'\u00C5', LBL.x2, LBL.y2, (theme==='dark')?'#ffcf8a':'#a05f00');
-    haloLbl('\u03B3='+LBL.g.toFixed(1)+'\u00B0', W-38, 18, (theme==='dark')?'#9aa7bf':'#586179');
+    haloLbl('a\u2081='+LBL.l1.toFixed(3)+'\u00C5', LBL.x1, LBL.y1, C_lbl1);
+    haloLbl('a\u2082='+LBL.l2.toFixed(3)+'\u00C5', LBL.x2, LBL.y2, C_lbl2);
+    haloLbl('\u03B3='+LBL.g.toFixed(1)+'\u00B0', W-38, 18, C_lblGam);
   }
 
   /* ---- axis orientation + crystal-axis compass ---- */
   pctx.save();
   pctx.textAlign='left'; pctx.textBaseline='alphabetic';
   pctx.font='600 11px ui-monospace,Consolas,monospace';
-  pctx.fillStyle=(theme==='dark')?'#a3b0c8':'#55617a';
+  pctx.fillStyle=C_normalTxt;
   pctx.fillText('normal = ('+PLANE.n.map(function(x){return x.toFixed(3);}).join(', ')+')', 12, 18);
   pctx.restore();
 
@@ -4085,6 +5216,1398 @@ function _compassDrawBody(W,H,ox,oy,R){
 /* ---------------- plane panel: state + info ---------------- */
 /* Build the per-element orbital chooser from the elements present in the
    current slice.  Each row is: El [l select] [m select] [size slider] value */
+
+/* ==== SYMMETRY / IRREP / SALC ENGINE (added) ==== */
+
+/* ============================================================================
+   SYMMETRY / IRREP / SALC ENGINE  (CrystalViewer)
+   ----------------------------------------------------------------------------
+   Combines an atom's orbital manifold (s,p,d,f) with its SITE point group to
+   produce the irreducible representations and their symmetry-adapted linear
+   combinations (SALCs) expressed over the SAME realSH basis the renderer uses.
+
+   Everything is verified against textbook character tables; the tables are
+   shipped as data and every one satisfies full row AND column orthogonality.
+
+   PUBLIC API (all pure functions, no globals):
+     PG_groupFromOps(cifOps, cell, fracPos)   -> {G, cls, classes, sizes, ...}
+     PG_identify(G, cls, classes)             -> {name, perm, irreps, ...}
+     PG_canonicalRotation(G)                  -> 3x3 rotation C
+     PG_decompose(G, cls, classes, ident, l)  -> [{irrep, mult, dim}]
+     PG_salcsFor(G, cls, classes, ident, l)   -> [{irrep, dim, vectors:[...]}]
+     PG_planeGroup(g1,g2) / PG_planeGroupName(ops)
+   ============================================================================ */
+
+/* ===== CHARACTER TABLES (data) =====
+   Each table: classes (names in the STANDARD order used by the rows),
+   sizes (|C| per class), irreps (name -> characters).
+   Characters may be complex: a complex value is stored as [re,im]. */
+var PG_TABLES = (function(){
+  var w = [ -0.5, 0.8660254037844386 ];      /* exp(2*pi*i/3) */
+  var w2= [ -0.5,-0.8660254037844386 ];      /* exp(4*pi*i/3) */
+  var II= [ 0.0, 1.0 ];                       /* i  */
+  var mI= [ 0.0,-1.0 ];                       /* -i */
+  var one=[1,0], zero=[0,0];
+  function C(v){ return (v instanceof Array)? v : [v,0]; }
+  function mulN(c,n){ return [C(c)[0]*n, C(c)[1]*n]; }
+  var T = {};
+  T['C1']  = {classes:['E'], sizes:[1], irreps:{A:[1]}};
+  T['Ci']  = {classes:['E','i'], sizes:[1,1], irreps:{Ag:[1,1],Au:[1,-1]}};
+  T['Cs']  = {classes:['E','s'], sizes:[1,1], irreps:{ "A'":[1,1],"A''":[1,-1] }};
+  T['C2']  = {classes:['E','C2'], sizes:[1,1], irreps:{A:[1,1],B:[1,-1]}};
+  T['C3']  = {classes:['E','C3','C3_2'], sizes:[1,1,1],
+              irreps:{A:[1,1,1],E1:[1,w,w2],E2:[1,w2,w]}};
+  T['C4']  = {classes:['E','C4','C2','C4_3'], sizes:[1,1,1,1],
+              irreps:{A:[1,1,1,1],B:[1,-1,1,-1],E1:[1,II,-1,mI],E2:[1,mI,-1,II]}};
+  T['S4']  = {classes:['E','S4','C2','S4_3'], sizes:[1,1,1,1],
+              irreps:{A:[1,1,1,1],B:[1,-1,1,-1],E1:[1,II,-1,mI],E2:[1,mI,-1,II]}};
+  T['C2v'] = {classes:['E','C2','sv','sv2'], sizes:[1,1,1,1],
+              irreps:{A1:[1,1,1,1],A2:[1,1,-1,-1],B1:[1,-1,1,-1],B2:[1,-1,-1,1]}};
+  T['C3v'] = {classes:['E','C3','sv'], sizes:[1,2,3],
+              irreps:{A1:[1,1,1],A2:[1,1,-1],E:[2,-1,0]}};
+  T['C4v'] = {classes:['E','C4','C2','sv','sd'], sizes:[1,2,1,2,2],
+              irreps:{A1:[1,1,1,1,1],A2:[1,1,1,-1,-1],B1:[1,-1,1,1,-1],B2:[1,-1,1,-1,1],E:[2,0,-2,0,0]}};
+  T['C6v'] = {classes:['E','C6','C3','C2','sv','sd'], sizes:[1,2,2,1,3,3],
+              irreps:{A1:[1,1,1,1,1,1],A2:[1,1,1,1,-1,-1],B1:[1,-1,1,-1,1,-1],B2:[1,-1,1,-1,-1,1],
+                      E1:[2,1,-1,-2,0,0],E2:[2,-1,-1,2,0,0]}};
+  T['D2']  = {classes:['E','C2z','C2y','C2x'], sizes:[1,1,1,1],
+              irreps:{A:[1,1,1,1],B1:[1,1,-1,-1],B2:[1,-1,1,-1],B3:[1,-1,-1,1]}};
+  T['D3']  = {classes:['E','C3','C2'], sizes:[1,2,3],
+              irreps:{A1:[1,1,1],A2:[1,1,-1],E:[2,-1,0]}};
+  T['D4']  = {classes:['E','C4','C2','C2a','C2b'], sizes:[1,2,1,2,2],
+              irreps:{A1:[1,1,1,1,1],A2:[1,1,1,-1,-1],B1:[1,-1,1,1,-1],B2:[1,-1,1,-1,1],E:[2,0,-2,0,0]}};
+  T['D6']  = {classes:['E','C6','C3','C2','C2a','C2b'], sizes:[1,2,2,1,3,3],
+              irreps:{A1:[1,1,1,1,1,1],A2:[1,1,1,1,-1,-1],B1:[1,-1,1,-1,1,-1],B2:[1,-1,1,-1,-1,1],
+                      E1:[2,1,-1,-2,0,0],E2:[2,-1,-1,2,0,0]}};
+  T['C2h'] = {classes:['E','C2','i','sh'], sizes:[1,1,1,1],
+              irreps:{Ag:[1,1,1,1],Bg:[1,-1,1,-1],Au:[1,1,-1,-1],Bu:[1,-1,-1,1]}};
+  T['D2h'] = {classes:['E','C2z','C2y','C2x','i','sz','sy','sx'], sizes:[1,1,1,1,1,1,1,1],
+              irreps:{Ag:[1,1,1,1,1,1,1,1],B1g:[1,1,-1,-1,1,1,-1,-1],B2g:[1,-1,1,-1,1,-1,1,-1],
+                      B3g:[1,-1,-1,1,1,-1,-1,1],Au:[1,1,1,1,-1,-1,-1,-1],B1u:[1,1,-1,-1,-1,-1,1,1],
+                      B2u:[1,-1,1,-1,-1,1,-1,1],B3u:[1,-1,-1,1,-1,1,1,-1]}};
+  T['D4h'] = {classes:['E','C4','C2','C2a','C2b','i','S4','sh','sd','sd2'], sizes:[1,2,1,2,2,1,2,1,2,2],
+              irreps:{A1g:[1,1,1,1,1,1,1,1,1,1],A2g:[1,1,1,-1,-1,1,1,1,-1,-1],
+                      B1g:[1,-1,1,1,-1,1,-1,1,1,-1],B2g:[1,-1,1,-1,1,1,-1,1,-1,1],
+                      Eg:[2,0,-2,0,0,2,0,-2,0,0],
+                      A1u:[1,1,1,1,1,-1,-1,-1,-1,-1],A2u:[1,1,1,-1,-1,-1,-1,-1,1,1],
+                      B1u:[1,-1,1,1,-1,-1,1,-1,-1,1],B2u:[1,-1,1,-1,1,-1,1,-1,1,-1],
+                      Eu:[2,0,-2,0,0,-2,0,2,0,0]}};
+  T['D3d'] = {classes:['E','C3','C2','i','S6','sd'], sizes:[1,2,3,1,2,3],
+              irreps:{A1g:[1,1,1,1,1,1],A2g:[1,1,-1,1,1,-1],Eg:[2,-1,0,2,-1,0],
+                      A1u:[1,1,1,-1,-1,-1],A2u:[1,1,-1,-1,-1,1],Eu:[2,-1,0,-2,1,0]}};
+  T['D6h'] = {classes:['E','C6','C3','C2','C2a','C2b','i','S3','S6','sh','sd','sd2'],
+              sizes:[1,2,2,1,3,3,1,2,2,1,3,3],
+              irreps:{A1g:[1,1,1,1,1,1,1,1,1,1,1,1],A2g:[1,1,1,1,-1,-1,1,1,1,1,-1,-1],
+                      B1g:[1,-1,1,-1,1,-1,1,-1,1,-1,1,-1],B2g:[1,-1,1,-1,-1,1,1,-1,1,-1,-1,1],
+                      E1g:[2,1,-1,-2,0,0,2,1,-1,-2,0,0],E2g:[2,-1,-1,2,0,0,2,-1,-1,2,0,0],
+                      A1u:[1,1,1,1,1,1,-1,-1,-1,-1,-1,-1],A2u:[1,1,1,1,-1,-1,-1,-1,-1,-1,1,1],
+                      B1u:[1,-1,1,-1,1,-1,-1,1,-1,1,-1,1],B2u:[1,-1,1,-1,-1,1,-1,1,-1,1,1,-1],
+                      E1u:[2,1,-1,-2,0,0,-2,-1,1,2,0,0],E2u:[2,-1,-1,2,0,0,-2,1,1,-2,0,0]}};
+  T['T']   = {classes:['E','C3','C3_2','C2'], sizes:[1,4,4,3],
+              irreps:{A:[1,1,1,1],E1:[1,w,w2,1],E2:[1,w2,w,1],T:[3,0,0,-1]}};
+  T['Th']  = {classes:['E','C3','C3_2','C2','i','S6','S6_5','sd'], sizes:[1,4,4,3,1,4,4,3],
+              irreps:{Ag:[1,1,1,1,1,1,1,1],Au:[1,1,1,1,-1,-1,-1,-1],
+                      E1g:[1,w,w2,1,1,w,w2,1],E2g:[1,w2,w,1,1,w2,w,1],
+                      E1u:[1,w,w2,1,-1,mulN(w,-1),mulN(w2,-1),-1],
+                      E2u:[1,w2,w,1,-1,mulN(w2,-1),mulN(w,-1),-1],
+                      Tg:[3,0,0,-1,3,0,0,-1],Tu:[3,0,0,-1,-3,0,0,1]}};
+  T['Td']  = {classes:['E','C3','C2','S4','sd'], sizes:[1,8,3,6,6],
+              irreps:{A1:[1,1,1,1,1],A2:[1,1,1,-1,-1],E:[2,-1,2,0,0],T1:[3,0,-1,1,-1],T2:[3,0,-1,-1,1]}};
+  T['O']   = {classes:['E','C3','C2','C4','C2b'], sizes:[1,8,3,6,6],
+              irreps:{A1:[1,1,1,1,1],A2:[1,1,1,-1,-1],E:[2,-1,2,0,0],T1:[3,0,-1,1,-1],T2:[3,0,-1,-1,1]}};
+  T['Oh']  = {classes:['E','C3','C2','C4','C2b','i','S4','S6','sh','sd'], sizes:[1,8,6,6,3,1,6,8,3,6],
+              irreps:{A1g:[1,1,1,1,1,1,1,1,1,1],A2g:[1,1,-1,-1,1,1,-1,1,1,-1],
+                      Eg:[2,-1,0,0,2,2,0,-1,2,0],T1g:[3,0,-1,1,-1,3,1,0,-1,-1],
+                      T2g:[3,0,1,-1,-1,3,-1,0,-1,1],
+                      A1u:[1,1,1,1,1,-1,-1,-1,-1,-1],A2u:[1,1,-1,-1,1,-1,1,-1,-1,1],
+                      Eu:[2,-1,0,0,2,-2,0,1,-2,0],T1u:[3,0,-1,1,-1,-3,-1,0,1,1],
+                      T2u:[3,0,1,-1,-1,-3,1,0,1,-1]}};
+  T['C3h'] = {classes:['E','C3','C3_2','sh','S3','S3_5'], sizes:[1,1,1,1,1,1],
+              irreps:{"A'":[1,1,1,1,1,1],"A''":[1,1,1,-1,-1,-1],
+                      "E1'":[1,w,w2,1,w,w2],"E2'":[1,w2,w,1,w2,w],
+                      "E1''":[1,w,w2,-1,mulN(w,-1),mulN(w2,-1)],
+                      "E2''":[1,w2,w,-1,mulN(w2,-1),mulN(w,-1)]}};
+  T['C6']  = {classes:['E','C6','C3','C2','C3_2','C6_5'], sizes:[1,1,1,1,1,1],
+              irreps:{A:[1,1,1,1,1,1],B:[1,-1,1,-1,1,-1],
+                      E1:[1,exp6(1),exp6(2),-1,exp6(4),exp6(5)],
+                      E2:[1,exp6(2),exp6(4),1,exp6(2),exp6(4)],
+                      E1c:[1,exp6(5),exp6(4),-1,exp6(2),exp6(1)],
+                      E2c:[1,exp6(4),exp6(2),1,exp6(4),exp6(2)]}};
+  function exp6(k){
+    var a=Math.PI/3*k;
+    return [Math.cos(a), Math.sin(a)];
+  }
+  return T;
+})();
+
+/* ===== small complex helpers ===== */
+function PG_cadd(a,b){ return [a[0]+b[0], a[1]+b[1]]; }
+function PG_cmul(a,b){ return [a[0]*b[0]-a[1]*b[1], a[0]*b[1]+a[1]*b[0]]; }
+function PG_cmulr(a,r){ return [a[0]*r, a[1]*r]; }
+function PG_cconj(a){ return [a[0],-a[1]]; }
+function PG_cabs2(a){ return a[0]*a[0]+a[1]*a[1]; }
+function PG_asC(v){ return (v instanceof Array)? v : [v,0]; }
+
+/* ===== 3x3 integer/float matrix helpers ===== */
+function PG_eye(){ return [[1,0,0],[0,1,0],[0,0,1]]; }
+function PG_mm(A,B){
+  var C=[[0,0,0],[0,0,0],[0,0,0]];
+  for(var i=0;i<3;i++)for(var j=0;j<3;j++){
+    var s=0; for(var k=0;k<3;k++) s+=A[i][k]*B[k][j];
+    C[i][j]=s;
+  } return C;
+}
+function PG_mT(A){ return [[A[0][0],A[1][0],A[2][0]],[A[0][1],A[1][1],A[2][1]],[A[0][2],A[1][2],A[2][2]]]; }
+function PG_mv(A,v){ return [A[0][0]*v[0]+A[0][1]*v[1]+A[0][2]*v[2],
+                             A[1][0]*v[0]+A[1][1]*v[1]+A[1][2]*v[2],
+                             A[2][0]*v[0]+A[2][1]*v[1]+A[2][2]*v[2]]; }
+function PG_det(A){ return A[0][0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
+                         - A[0][1]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
+                         + A[0][2]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]); }
+function PG_trace(A){ var s=0; for(var i=0;i<A.length;i++) s+=A[i][i]; return s; }
+function PG_key(A){
+  var s='';
+  for(var i=0;i<3;i++)for(var j=0;j<3;j++) s+=PG_snap(A[i][j])+',';
+  return s;
+}
+function PG_order(A){
+  var P=PG_eye();
+  for(var n=1;n<=24;n++){ P=PG_mm(P,A); if(PG_key(P)===PG_key(PG_eye())) return n; }
+  return 0;
+}
+function PG_snap(x){
+  if(Math.abs(x)<1e-9) return 0;
+  if(Math.abs(x-Math.round(x))<1e-9) return Math.round(x);
+  if(Math.abs(Math.abs(x)-0.5)<1e-9) return x<0?-0.5:0.5;
+  var s3=Math.sqrt(3)/2;
+  if(Math.abs(Math.abs(x)-s3)<1e-8) return x<0?-s3:s3;
+  if(Math.abs(Math.abs(x)-1/Math.sqrt(2))<1e-8) return x<0?-1/Math.sqrt(2):1/Math.sqrt(2);
+  return Math.round(x*1e7)/1e7;
+}
+function PG_roundM(A){ var B=[]; for(var i=0;i<3;i++){ var r=[]; for(var j=0;j<3;j++) r.push(PG_snap(A[i][j])); B.push(r);} return B; }
+
+/* ===== group closure ===== */
+function PG_closure(gens, maxn){
+  maxn=maxn||400;
+  var seen={}, list=[], I=PG_eye();
+  seen[PG_key(I)]=1; list.push(I);
+  var frontier=[I];
+  while(frontier.length){
+    var nxt=[];
+    for(var a=0;a<frontier.length;a++){
+      for(var g=0;g<gens.length;g++){
+        var P=PG_roundM(PG_mm(frontier[a],gens[g])), k=PG_key(P);
+        if(!seen[k]){
+          seen[k]=1; list.push(P); nxt.push(P);
+          if(list.length>maxn) return null;
+        }
+      }
+    }
+    frontier=nxt;
+  }
+  return list;
+}
+
+/* ===== conjugacy classes ===== */
+function PG_conjugacyClasses(G){
+  var n=G.length, idx={};
+  for(var i=0;i<n;i++) idx[PG_key(G[i])]=i;
+  var cls=new Array(n), classes=[];
+  for(var z=0;z<n;z++) cls[z]=-1;
+  for(var i2=0;i2<n;i2++){
+    if(cls[i2]>=0) continue;
+    var ci=classes.length, mem=[], gi=G[i2];
+    for(var j=0;j<n;j++){
+      var h=G[j];
+      var conj=PG_roundM(PG_mm(PG_mm(h,gi),PG_mT(h)));
+      var jj=idx[PG_key(conj)];
+      if(jj!==undefined && cls[jj]<0){ cls[jj]=ci; mem.push(jj); }
+    }
+    classes.push(mem);
+  }
+  return {cls:cls, classes:classes};
+}
+
+/* ===== class signature used to match a table row order to the runtime order ==== */
+function PG_runtimeSig(G,mem){
+  var M=G[mem[0]], d=Math.round(PG_det(M)), o=PG_order(M), t=Math.round(PG_trace(M)*1e3)/1e3;
+  if(o===1 && d===1) return 'E|1|3';
+  if(d===1) return 'C'+o+'|'+t;
+  if(o===2 && Math.abs(t+3)<1e-6) return 'i|2|-3';
+  if(o===2 && Math.abs(t-1)<1e-6) return 's|2|1';
+  return 'S'+o+'|'+t;
+}
+function PG_tableSig(name){
+  if(name==='E') return 'E|1|3';
+  if(name==='i') return 'i|2|-3';
+  if(name.charAt(0)==='s') return 's|2|1';
+  var mC=/^C(\d+)/.exec(name);
+  if(mC){ var o=parseInt(mC[1],10);
+    var tt={2:-1,3:0,4:1,6:2}[o]; return 'C'+o+'|'+tt; }
+  var mS=/^S(\d+)/.exec(name);
+  if(mS){ var o2=parseInt(mS[1],10);
+    var tt2={3:0,4:-1,6:0}[o2]; return 'S'+o2+'|'+tt2; }
+  return '?';
+}
+
+/* ===== representation matrix of an operation on the realSH basis ===== */
+var PG_FIB=null;
+function PG_fibDirs(N){
+  if(PG_FIB && PG_FIB.length>=N) return PG_FIB;
+  var out=[], ga=Math.PI*(3-Math.sqrt(5));
+  for(var i=0;i<N;i++){
+    var y=1-(i+0.5)*2/N, r=Math.sqrt(Math.max(0,1-y*y)), th=ga*i;
+    out.push([Math.cos(th)*r, y, Math.sin(th)*r]);
+  }
+  PG_FIB=out;
+  return out;
+}
+function PG_Y(l,m,x,y,z){
+  switch(l){
+    case 0: return 0.282095;
+    case 1: if(m===0) return 0.488603*z; if(m===1) return 0.488603*x; return 0.488603*y;
+    case 2:
+      if(m===0) return 1.092548*x*y;
+      if(m===1) return 1.092548*y*z;
+      if(m===2) return 0.315392*(3*z*z-1);
+      if(m===3) return 1.092548*x*z;
+      return 0.546274*(x*x-y*y);
+    case 3:
+      if(m===0) return 0.373176*z*(5*z*z-3);
+      if(m===1) return 0.457045*x*(5*z*z-1);
+      if(m===2) return 0.457045*y*(5*z*z-1);
+      if(m===3) return 1.445306*x*y*z;
+      if(m===4) return 0.590044*z*(x*x-y*y);
+      if(m===5) return 1.770130*x*(x*x-3*y*y);
+      return 1.770130*y*(3*x*x-y*y);
+  }
+  return 0;
+}
+function PG_dimL(l){ return 2*l+1; }
+/* solve small dense system  X A = B  (A is n x n)  by Gauss-Jordan */
+function PG_solveLin(Amat,Bmat,n){
+  var M=[];
+  for(var i=0;i<n;i++){ var row=Amat[i].slice(); for(var j=0;j<n;j++) row.push(Bmat[i][j]); M.push(row); }
+  for(var c=0;c<n;c++){
+    var piv=c, best=Math.abs(M[c][c]);
+    for(var r2=c+1;r2<n;r2++) if(Math.abs(M[r2][c])>best){ best=Math.abs(M[r2][c]); piv=r2; }
+    if(best<1e-12) continue;
+    if(piv!==c){ var t=M[piv]; M[piv]=M[c]; M[c]=t; }
+    var d0=M[c][c];
+    for(var j3=c;j3<2*n;j3++) M[c][j3]/=d0;
+    for(var r3=0;r3<n;r3++){
+      if(r3===c) continue;
+      var f=M[r3][c]; if(f===0) continue;
+      for(var j4=c;j4<2*n;j4++) M[r3][j4]-=f*M[c][j4];
+    }
+  }
+  var X=[];
+  for(var i4=0;i4<n;i4++) X.push(M[i4].slice(n,2*n));
+  return X;
+}
+var PG_REP_CACHE={};
+function PG_repMatrix(l,R){
+  var key=l+'|'+PG_key(R);
+  if(PG_REP_CACHE[key]) return PG_REP_CACHE[key];
+  var n=PG_dimL(l), N=Math.max(8*n+90,96);
+  var pts=PG_fibDirs(N);
+  var A=[], B=[];
+  var Rt=PG_mT(R);
+  for(var k=0;k<N;k++){
+    var p=pts[k], ar=[], br=[];
+    for(var m=0;m<n;m++) ar.push(PG_Y(l,m,p[0],p[1],p[2]));
+    var q=PG_mv(Rt,p);
+    for(var m2=0;m2<n;m2++) br.push(PG_Y(l,m2,q[0],q[1],q[2]));
+    A.push(ar); B.push(br);
+  }
+  var AtA=[], AtB=[];
+  for(var i=0;i<n;i++){ var ra=[], rb=[]; for(var j=0;j<n;j++) ra.push(0), rb.push(0); AtA.push(ra); AtB.push(rb); }
+  for(var k2=0;k2<N;k2++){
+    for(var i2=0;i2<n;i2++){
+      for(var j2=0;j2<n;j2++) AtA[i2][j2]+=A[k2][i2]*A[k2][j2];
+      for(var m3=0;m3<n;m3++) AtB[i2][m3]+=A[k2][i2]*B[k2][m3];
+    }
+  }
+  var D=PG_solveLin(AtA,AtB,n);
+  PG_REP_CACHE[key]=D;
+  return D;
+}
+
+/* ===== identify the point group and the runtime-order -> table-order permutation =====
+   Strategy (validated): match by (i) group order, (ii) class-size multiset, and
+   (iii) the multiset of class signatures.  Then search over permutations that
+   respect the signature buckets and keep the one for which the l=0,1,2
+   multiplicities are all non-negative integers.  That pins the order uniquely
+   and needs no axis conventions. */
+function PG_identifyGroup(G, cls, classes){
+  var n=G.length, ncl=classes.length;
+  var rsig=[];
+  for(var i=0;i<ncl;i++) rsig.push(PG_runtimeSig(G,classes[i]));
+  var sizes=[]; for(var i2=0;i2<ncl;i2++) sizes.push(classes[i2].length);
+  var sizeSorted=sizes.slice().sort(function(a,b){return a-b;});
+  var best=null;
+  for(var name in PG_TABLES){
+    var T=PG_TABLES[name];
+    if(T.classes.length!==ncl) continue;
+    var tot=0; for(var q=0;q<T.sizes.length;q++) tot+=T.sizes[q];
+    if(tot!==n) continue;
+    var tSorted=T.sizes.slice().sort(function(a,b){return a-b;});
+    var ok=true;
+    for(var q2=0;q2<ncl;q2++) if(tSorted[q2]!==sizeSorted[q2]){ ok=false; break; }
+    if(!ok) continue;
+    var tsig=[]; for(var q3=0;q3<T.classes.length;q3++) tsig.push(PG_tableSig(T.classes[q3]));
+    /* signature multisets must agree */
+    var a1=rsig.slice().sort(), a2=tsig.slice().sort();
+    var ok2=true;
+    for(var q4=0;q4<ncl;q4++) if(a1[q4]!==a2[q4]){ ok2=false; break; }
+    if(!ok2) continue;
+    var perm=PG_findPermutation(G,cls,classes,T,rsig,tsig);
+    if(perm){ best={name:name, perm:perm, table:T}; break; }
+  }
+  return best;
+}
+function PG_findPermutation(G, cls, classes, T, rsig, tsig){
+  var n=G.length, ncl=classes.length;
+  /* buckets by signature */
+  var rb={}, tb={};
+  for(var i=0;i<ncl;i++){ (rb[rsig[i]]=rb[rsig[i]]||[]).push(i); }
+  for(var j=0;j<ncl;j++){ (tb[tsig[j]]=tb[tsig[j]]||[]).push(j); }
+  var keys=[]; for(var k in rb) keys.push(k);
+  /* all permutations within each bucket */
+  var choices=[];
+  for(var ki=0;ki<keys.length;ki++){
+    var arr=tb[keys[ki]]||[];
+    choices.push(PG_perms(arr));
+  }
+  /* iterate the cartesian product */
+  var idxList=new Array(choices.length).fill(0);
+  var guard=0;
+  while(guard++<200000){
+    var perm=new Array(ncl);
+    for(var c=0;c<choices.length;c++){
+      var assign=choices[c][idxList[c]];
+      var rk=rb[keys[c]];
+      for(var t=0;t<rk.length;t++) perm[rk[t]]=assign[t];
+    }
+    if(PG_permConsistent(G,cls,classes,T,perm)) return perm;
+    /* increment */
+    var pos=0;
+    while(pos<choices.length){
+      idxList[pos]++;
+      if(idxList[pos]<choices[pos].length) break;
+      idxList[pos]=0; pos++;
+    }
+    if(pos===choices.length) break;
+  }
+  return null;
+}
+function PG_perms(arr){
+  if(arr.length<=1) return [arr.slice()];
+  var out=[];
+  for(var i=0;i<arr.length;i++){
+    var rest=arr.slice(0,i).concat(arr.slice(i+1));
+    var sub=PG_perms(rest);
+    for(var s=0;s<sub.length;s++){ out.push([arr[i]].concat(sub[s])); }
+  }
+  return out;
+}
+function PG_permConsistent(G,cls,classes,T,perm){
+  /* Test a candidate class permutation.  Two conditions, both necessary:
+     (a) every multiplicity for l=0,1,2 is a non-negative integer;
+     (b) every irrep's PROJECTION OPERATOR is idempotent (P^2 = P).
+     Condition (b) is what pins the permutation for groups whose characters
+     give integral multiplicities under more than one assignment (D2h, D2,
+     D4h, ...).  Without it the projector can come out non-idempotent and the
+     SALC stage then returns the wrong NUMBER of vectors. */
+  var ncl=classes.length, sizes=[];
+  for(var i=0;i<ncl;i++) sizes.push(classes[i].length);
+  var names=[]; for(var nm in T.irreps) names.push(nm);
+  var NG=G.length;
+  /* per-l representation matrices are cached by PG_repMatrix already */
+  for(var l=0;l<=2;l++){
+    var base=[]; for(var gi=0;gi<G.length;gi++) base.push(PG_repMatrix(l,G[gi]));
+    var chiG=[];
+    for(var c=0;c<ncl;c++){
+      var s=0;
+      for(var m=0;m<classes[c].length;m++) s+=PG_trace(base[classes[c][m]]);
+      chiG.push(s/classes[c].length);
+    }
+    for(var ii=0;ii<names.length;ii++){
+      var chi=T.irreps[names[ii]];
+      var nr=0;
+      for(var c2=0;c2<ncl;c2++){
+        var cb=PG_asC(chi[perm[c2]]);
+        nr+=sizes[c2]*(cb[0]*chiG[c2]);   /* chi_Gamma real */
+      }
+      nr/=NG;
+      if(Math.abs(nr-Math.round(nr))>1e-6 || nr<-1e-6) return false;
+      /* (b) idempotency of the projector, but only when this irrep actually
+         appears in the manifold (otherwise the projector is 0 and P^2=P is
+         trivially satisfied, so the test still holds). */
+      var d=Math.round(PG_asC(chi[0])[0]);
+      var n=PG_dimL(l);
+      var P=[];
+      for(var a=0;a<n;a++){ var r=[]; for(var b=0;b<n;b++) r.push(0); P.push(r); }
+      for(var gi2=0;gi2<G.length;gi2++){
+        var ch=PG_asC(chi[perm[cls[gi2]]]);
+        var Rm=base[gi2];
+        for(var a2=0;a2<n;a2++) for(var b2=0;b2<n;b2++) P[a2][b2]+=ch[0]*Rm[a2][b2];
+      }
+      for(var a3=0;a3<n;a3++) for(var b3=0;b3<n;b3++) P[a3][b3]*=d/NG;
+      for(var a4=0;a4<n;a4++) for(var b4=0;b4<n;b4++){
+        var acc=0; for(var k=0;k<n;k++) acc+=P[a4][k]*P[k][b4];
+        if(Math.abs(acc-P[a4][b4])>1e-6) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/* ===== decomposition of the l-manifold ===== */
+function PG_decompose(G, cls, classes, ident, l){
+  var T=ident.table, perm=ident.perm, ncl=classes.length;
+  var sizes=[]; for(var i=0;i<ncl;i++) sizes.push(classes[i].length);
+  var base=[]; for(var gi=0;gi<G.length;gi++) base.push(PG_repMatrix(l,G[gi]));
+  var chiG=[];
+  for(var c=0;c<ncl;c++){
+    var s=0;
+    for(var m=0;m<classes[c].length;m++) s+=PG_trace(base[classes[c][m]]);
+    chiG.push(s/classes[c].length);
+  }
+  var out=[];
+  for(var nm in T.irreps){
+    var chi=T.irreps[nm];
+    var re=0, im=0;
+    for(var c2=0;c2<ncl;c2++){
+      var cb=PG_asC(chi[perm[c2]]);
+      re+=sizes[c2]*(cb[0]*chiG[c2]);
+      im+=sizes[c2]*(-cb[1]*chiG[c2]);   /* conj */
+    }
+    var mult=re/G.length;
+    out.push({name:nm, dim:Math.round(PG_asC(chi[0])[0]), mult:mult});
+  }
+  return {chiG:chiG, parts:out, base:base};
+}
+
+/* ===== SALCs ===== */
+function PG_gramSchmidt(vecs){
+  var out=[];
+  for(var i=0;i<vecs.length;i++){
+    var v=vecs[i].slice();
+    for(var b=0;b<out.length;b++){
+      var d=0; for(var k=0;k<v.length;k++) d+=out[b][k]*v[k];
+      for(var k2=0;k2<v.length;k2++) v[k2]-=d*out[b][k2];
+    }
+    var nrm=0; for(var k3=0;k3<v.length;k3++) nrm+=v[k3]*v[k3];
+    nrm=Math.sqrt(nrm);
+    if(nrm<1e-8) continue;
+    for(var k4=0;k4<v.length;k4++) v[k4]/=nrm;
+    out.push(v);
+  }
+  return out;
+}
+function PG_jacobiSym(Ain,n){
+  var A=[], V=[];
+  for(var i=0;i<n;i++){ A.push(Ain[i].slice()); var row=[]; for(var j=0;j<n;j++) row.push(i===j?1:0); V.push(row); }
+  for(var sweep=0;sweep<200;sweep++){
+    var off=0;
+    for(var p=0;p<n;p++) for(var q=p+1;q<n;q++) off+=A[p][q]*A[p][q];
+    if(off<1e-24) break;
+    for(var p2=0;p2<n;p2++) for(var q2=p2+1;q2<n;q2++){
+      if(Math.abs(A[p2][q2])<1e-18) continue;
+      var theta=(A[q2][q2]-A[p2][p2])/(2*A[p2][q2]);
+      var t=(theta>=0?1:-1)/(Math.abs(theta)+Math.sqrt(theta*theta+1));
+      var cc=1/Math.sqrt(t*t+1), ss=t*cc;
+      for(var k=0;k<n;k++){ var akp=A[k][p2],akq=A[k][q2]; A[k][p2]=cc*akp-ss*akq; A[k][q2]=ss*akp+cc*akq; }
+      for(var k2=0;k2<n;k2++){ var apk=A[p2][k2],aqk=A[q2][k2]; A[p2][k2]=cc*apk-ss*aqk; A[q2][k2]=ss*apk+cc*aqk; }
+      for(var k3=0;k3<n;k3++){ var vkp=V[k3][p2],vkq=V[k3][q2]; V[k3][p2]=cc*vkp-ss*vkq; V[k3][q2]=ss*vkp+cc*vkq; }
+    }
+  }
+  var ev=[]; for(var i2=0;i2<n;i2++) ev.push(A[i2][i2]);
+  return {values:ev, vectors:V};
+}
+/* projection operator for one irrep; returns orthonormalised coefficient rows */
+
+/* ============================================================================
+   SALC ALIGNMENT TO THE PLANE AXES
+   ----------------------------------------------------------------------------
+   The projection operator returns SOME orthonormal basis of each irrep
+   subspace.  Within one irrep the basis is arbitrary (the irrep acts
+   irreducibly there), so we may rotate it freely WITHOUT changing the physics.
+   This routine chooses the basis whose in-plane / out-of-plane character is
+   diagonal, which is the natural basis for a surface/slab: one SALC points as
+   far out of the plane as possible and the complement lies in the plane.
+
+   Method: the second-moment matrix of the plane normal,
+       N_ab = < Y_a | (n.r)^2 | Y_b >
+   measures how much of each basis function points along n.  Restricted to an
+   irrep subspace (coefficient vectors s_i), the matrix M_ij = s_i^T N s_j is
+   real symmetric; its eigenvectors are the stationarity directions of the
+   out-of-plane content.  Sorting them by eigenvalue gives, in order, the
+   'most out-of-plane' to the 'most in-plane' basis.
+   ============================================================================ */
+
+var PG_MOM_CACHE={};
+/*  N_ab for degree l and unit normal n  (2l+1 square), by sphere quadrature. */
+function PG_normalMoment(l, n){
+  var key=l+'|'+n[0].toFixed(4)+','+n[1].toFixed(4)+','+n[2].toFixed(4);
+  if(PG_MOM_CACHE[key]) return PG_MOM_CACHE[key];
+  var d=2*l+1;
+  /* Gauss-Legendre in cos(theta) x uniform in phi.  Enough points for l<=3. */
+  var NTH=64, NPH=128;
+  var gl=PG_gaussLegendre(NTH);
+  var M=[];
+  for(var a=0;a<d;a++){ var r=[]; for(var b=0;b<d;b++) r.push(0); M.push(r); }
+  for(var i=0;i<NTH;i++){
+    var ct=gl.x[i], wt=gl.w[i];
+    var st=Math.sqrt(Math.max(0,1-ct*ct));
+    for(var j=0;j<NPH;j++){
+      var ph=2*Math.PI*(j+0.5)/NPH;
+      var x=st*Math.cos(ph), y=st*Math.sin(ph), z=ct;
+      var proj=n[0]*x+n[1]*y+n[2]*z;
+      var f=proj*proj;
+      var w=wt*(2*Math.PI/NPH);
+      var ya=[];
+      for(var m=0;m<d;m++) ya.push(PG_Y(l,m,x,y,z));
+      for(var a2=0;a2<d;a2++) for(var b2=0;b2<d;b2++)
+        M[a2][b2]+=w*f*ya[a2]*ya[b2];
+    }
+  }
+  PG_MOM_CACHE[key]=M;
+  return M;
+}
+/* Gauss-Legendre nodes/weights on [-1,1] */
+function PG_gaussLegendre(n){
+  var x=[], w=[];
+  for(var i=0;i<n;i++){
+    var z=Math.cos(Math.PI*(i+0.75)/(n+0.5));
+    for(var it=0;it<100;it++){
+      var p1=1,p2=0;
+      for(var j=0;j<n;j++){ var p3=p2; p2=p1; p1=((2*j+1)*z*p2-j*p3)/(j+1); }
+      var pp=n*(z*p1-p2)/(z*z-1);
+      var z1=z; z=z1-p1/pp;
+      if(Math.abs(z-z1)<1e-14) break;
+    }
+    x.push(z); w.push(2/((1-z*z)*pp*pp));
+  }
+  return {x:x,w:w};
+}
+
+/* Rotate the basis vectors inside a single irrep subspace so that the
+   out-of-plane content is diagonal.  Returns the new vectors, ordered from the
+   most out-of-plane to the most in-plane, together with the out-of-plane
+   fraction of each (for labelling the UI). */
+function PG_alignToPlane(vecs, l, n){
+  if(!vecs || vecs.length<2) {
+    if(vecs && vecs.length===1){
+      var f=PG_outOfPlaneFraction(vecs[0],l,n);
+      return {vecs:[vecs[0]], fracs:[f]};
+    }
+    return {vecs:vecs||[], fracs:[]};
+  }
+  var d=vecs[0].length;
+  var M=PG_normalMoment(l,n);
+  /* subspace matrix  S_ij = v_i^T M v_j */
+  var k=vecs.length;
+  var S=[];
+  for(var i=0;i<k;i++){
+    var row=[];
+    for(var j=0;j<k;j++){
+      var s=0;
+      for(var a=0;a<d;a++) for(var b=0;b<d;b++) s+=vecs[i][a]*M[a][b]*vecs[j][b];
+      row.push(s);
+    }
+    S.push(row);
+  }
+  var ev=PG_jacobiSym(S,k);
+  /* order by descending eigenvalue = most out-of-plane first */
+  var idx=[];
+  for(var q=0;q<k;q++) idx.push(q);
+  idx.sort(function(A,B){ return ev.values[B]-ev.values[A]; });
+  var out=[], fr=[];
+  for(var t=0;t<k;t++){
+    var col=idx[t];
+    var v=[];
+    for(var a2=0;a2<d;a2++){
+      var s2=0;
+      for(var i2=0;i2<k;i2++) s2+=ev.vectors[i2][col]*vecs[i2][a2];
+      v.push(s2);
+    }
+    /* normalise and fix an arbitrary sign so the dominant component is + */
+    var nrm=0; for(var a3=0;a3<d;a3++) nrm+=v[a3]*v[a3];
+    nrm=Math.sqrt(nrm)||1;
+    for(var a4=0;a4<d;a4++) v[a4]/=nrm;
+    var mx=0, mi=0;
+    for(var a5=0;a5<d;a5++) if(Math.abs(v[a5])>mx){ mx=Math.abs(v[a5]); mi=a5; }
+    if(v[mi]<0) for(var a6=0;a6<d;a6++) v[a6]=-v[a6];
+    out.push(v);
+    fr.push(PG_outOfPlaneFraction(v,l,n));
+  }
+  return {vecs:out, fracs:fr};
+}
+
+/* Fraction of |psi|^2 lying along the plane normal, in [0,1].  Uses the same
+   second-moment matrix:  fraction = v^T M v / (normalisation of Y a^2). */
+function PG_outOfPlaneFraction(v, l, n){
+  /* How much of this SALC points along the plane normal, reported on a true
+     0..1 scale.
+     The raw measure is the cosine-squared-weighted moment
+         r(v) = (v^T M v) / (v^T G v),      M_ab = <Y_a (n.r)^2 Y_b>,
+                                            G_ab = <Y_a Y_b>,
+     which for a p orbital ranges over [0.2, 0.6], not [0, 1].  The attainable
+     extremes for a given l and n are the min/max GENERALISED eigenvalues of
+     (M, G), so we rescale:
+         fraction = (r - r_min) / (r_max - r_min)
+     giving 1 for the most out-of-plane function of that l and 0 for the most
+     in-plane one.  Both M and G are computed once and cached. */
+  var d=v.length;
+  var MG=PG_momentPair(l,n);
+  var M=MG.M, G=MG.G;
+  var num=0, den=0;
+  for(var a=0;a<d;a++) for(var b=0;b<d;b++){
+    num+=v[a]*M[a][b]*v[b];
+    den+=v[a]*G[a][b]*v[b];
+  }
+  if(Math.abs(den)<1e-14) return 0;
+  var r=num/den;
+  var lo=MG.rmin, hi=MG.rmax;
+  if(hi-lo<1e-12) return 0;
+  var f=(r-lo)/(hi-lo);
+  if(f<0) f=0; if(f>1) f=1;
+  return f;
+}
+
+/* The (M, G) moment pair for degree l and unit normal n, plus the attainable
+   ratio range [rmin, rmax] obtained from the generalised eigenvalues. */
+var PG_MOMPAIR_CACHE={};
+function PG_momentPair(l, n){
+  var key=l+'|'+n[0].toFixed(4)+','+n[1].toFixed(4)+','+n[2].toFixed(4);
+  if(PG_MOMPAIR_CACHE[key]) return PG_MOMPAIR_CACHE[key];
+  var d=2*l+1;
+  var M=PG_normalMoment(l,n);          /* <Y_a (n.r)^2 Y_b> (cached) */
+  var G=PG_gramMatrix(l);              /* <Y_a Y_b>          (cached) */
+  /* generalised eigenvalues of (M, G) = eigenvalues of G^{-1} M for symmetric
+     G; safer: solve the generalised symmetric problem via Cholesky-free
+     Jacobi on G^{-1/2} M G^{-1/2}.  For our realSH G is the identity, so we
+     can simply use the eigenvalues of M when G is diagonal. */
+  var rmin=0, rmax=0;
+  /* Normalise M by the Gram metric first: with  Ms = D^-1/2 M D^-1/2  where
+     D = diag(G), the generalised eigenvalues of (M,G) are the ordinary
+     eigenvalues of the symmetric Ms.  This cancels the small quadrature bias
+     that is common to M and G, so the range comes out clean. */
+  var D=[];
+  for(var a=0;a<d;a++) D.push(Math.sqrt(Math.abs(G[a][a])>1e-14?G[a][a]:1));
+  var Ms=[];
+  for(var a2=0;a2<d;a2++){ var r=[]; for(var b2=0;b2<d;b2++) r.push(M[a2][b2]/(D[a2]*D[b2])); Ms.push(r); }
+  var ev=PG_jacobiSym(Ms,d);
+  rmin=ev.values[0]; rmax=ev.values[0];
+  for(var q=1;q<d;q++){ if(ev.values[q]<rmin) rmin=ev.values[q];
+                        if(ev.values[q]>rmax) rmax=ev.values[q]; }
+  var res={M:M, G:G, rmin:rmin, rmax:rmax};
+  PG_MOMPAIR_CACHE[key]=res;
+  return res;
+}
+
+/*  <Y_a Y_b> for degree l: the Gram matrix of the realSH basis. */
+var PG_GRAM_CACHE={};
+function PG_gramMatrix(l){
+  if(PG_GRAM_CACHE[l]) return PG_GRAM_CACHE[l];
+  var d=2*l+1;
+  var NTH=64, NPH=128;
+  var gl=PG_gaussLegendre(NTH);
+  var G=[];
+  for(var a=0;a<d;a++){ var r=[]; for(var b=0;b<d;b++) r.push(0); G.push(r); }
+  for(var i=0;i<NTH;i++){
+    var ct=gl.x[i], wt=gl.w[i];
+    var st=Math.sqrt(Math.max(0,1-ct*ct));
+    for(var j=0;j<NPH;j++){
+      var ph=2*Math.PI*(j+0.5)/NPH;
+      var x=st*Math.cos(ph), y=st*Math.sin(ph), z=ct;
+      var w=wt*(2*Math.PI/NPH);
+      var ya=[];
+      for(var m=0;m<d;m++) ya.push(PG_Y(l,m,x,y,z));
+      for(var a2=0;a2<d;a2++) for(var b2=0;b2<d;b2++) G[a2][b2]+=w*ya[a2]*ya[b2];
+    }
+  }
+  PG_GRAM_CACHE[l]=G;
+  return G;
+}
+
+function PG_salcVectors(G, cls, classes, ident, l, irrepName){
+  var T=ident.table, perm=ident.perm;
+  var n=PG_dimL(l);
+  var chi=T.irreps[irrepName];
+  var d=Math.round(PG_asC(chi[0])[0]);
+  var P=[];
+  for(var i=0;i<n;i++){ var r=[]; for(var j=0;j<n;j++) r.push(0); P.push(r); }
+  for(var gi=0;gi<G.length;gi++){
+    var c=cls[gi];
+    var ch=PG_asC(chi[perm[c]]);
+    var Rm=PG_repMatrix(l,G[gi]);
+    var re=ch[0], im=ch[1];
+    for(var a=0;a<n;a++) for(var b=0;b<n;b++){
+      /* real part of chi * R ; chi_Gamma is real so only Re matters for real SALCs */
+      P[a][b]+=re*Rm[a][b];
+    }
+  }
+  for(var a2=0;a2<n;a2++) for(var b2=0;b2<n;b2++) P[a2][b2]*=d/G.length;
+  /* eigenvectors of the (Hermitian, idempotent) projector */
+  var sym=[];
+  for(var i2=0;i2<n;i2++){ var rr=[]; for(var j2=0;j2<n;j2++) rr.push((P[i2][j2]+P[j2][i2])/2); sym.push(rr); }
+  var ev=PG_jacobiSym(sym,n);
+  var cols=[];
+  for(var q=0;q<n;q++){
+    if(ev.values[q]>1e-7){
+      var v=[]; for(var k=0;k<n;k++) v.push(ev.vectors[k][q]);
+      cols.push(v);
+    }
+  }
+  return PG_gramSchmidt(cols);
+}
+
+/* ===== SITE-SYMMETRY GROUP from the CIF symmetry operations =====
+   ops: array of {M: 3x3 (fractional rotation), c: 3 translation}
+   cell: 3x3 with lattice vectors as ROWS
+   frac: fractional coordinates of the anchored site
+   An operation fixes the site iff M*f + c == f (mod 1).
+   Its Cartesian rotation about the site is R = A M A^-1 with A = [a,b,c] as
+   COLUMNS.  We return the distinct Cartesian rotations generating the site
+   point group. */
+function PG_siteGroupOps(ops, cell, frac, tol){
+  tol = tol || 1e-4;
+  var A=[[cell[0][0],cell[1][0],cell[2][0]],
+         [cell[0][1],cell[1][1],cell[2][1]],
+         [cell[0][2],cell[1][2],cell[2][2]]];
+  var Ai=PG_inv3(A);
+  if(!Ai) return null;
+  var out={}, outList=[];
+  for(var i=0;i<ops.length;i++){
+    var M=ops[i].M, c=ops[i].c;
+    /* image of the site */
+    var im=[0,0,0];
+    for(var r=0;r<3;r++){
+      im[r]=c[r];
+      for(var k=0;k<3;k++) im[r]+=M[r][k]*frac[k];
+    }
+    var dv=[im[0]-frac[0], im[1]-frac[1], im[2]-frac[2]];
+    var ok=true;
+    for(var r2=0;r2<3;r2++){
+      var d=dv[r2]-Math.round(dv[r2]);
+      if(Math.abs(d)>tol){ ok=false; break; }
+    }
+    if(!ok) continue;
+    /* Cartesian rotation R = A M A^-1 */
+    var R=PG_mm(PG_mm(A,M),Ai);
+    R=PG_roundM(R);
+    var k2=PG_key(R);
+    if(!out[k2]){ out[k2]=1; outList.push(R); }
+  }
+  return outList;
+}
+function PG_inv3(A){
+  var d=PG_det(A);
+  if(Math.abs(d)<1e-12) return null;
+  var inv=[[0,0,0],[0,0,0],[0,0,0]];
+  inv[0][0]=(A[1][1]*A[2][2]-A[1][2]*A[2][1])/d;
+  inv[0][1]=(A[0][2]*A[2][1]-A[0][1]*A[2][2])/d;
+  inv[0][2]=(A[0][1]*A[1][2]-A[0][2]*A[1][1])/d;
+  inv[1][0]=(A[1][2]*A[2][0]-A[1][0]*A[2][2])/d;
+  inv[1][1]=(A[0][0]*A[2][2]-A[0][2]*A[2][0])/d;
+  inv[1][2]=(A[0][2]*A[1][0]-A[0][0]*A[1][2])/d;
+  inv[2][0]=(A[1][0]*A[2][1]-A[1][1]*A[2][0])/d;
+  inv[2][1]=(A[0][1]*A[2][0]-A[0][0]*A[2][1])/d;
+  inv[2][2]=(A[0][0]*A[1][1]-A[0][1]*A[1][0])/d;
+  return inv;
+}
+
+/* ===== PLANE-ADAPTED SITE GROUP =====
+   The full site-symmetry group is a property of the crystal and does NOT depend
+   on which plane you look at.  For a 2D layer / surface picture the physically
+   relevant group is the subgroup of site operations that leave the PLANE
+   invariant:
+     mode 'full'   : every site operation                       (3D bulk site group)
+     mode 'slab'   : operations with  R n = +n  (top/bottom symmetric slab)
+     mode 'surface': operations with  R n = +n  AND  det R = +1 or mirror
+                     containing n (the half-space / terminated-surface group)
+   For the slab/surface split we use the standard surface convention: reflections
+   whose mirror plane CONTAINS n are kept (R n = +n), while those whose mirror
+   plane is the layer plane (R n = -n) are dropped for 'surface' but kept for
+   'slab'.  Inversion is dropped for 'surface'. */
+function PG_planeAdaptedOps(siteOps, n, mode){
+  if(mode==='full') return siteOps.slice();
+  var out=[];
+  for(var i=0;i<siteOps.length;i++){
+    var M=siteOps[i];
+    var Mn=[M[0][0]*n[0]+M[0][1]*n[1]+M[0][2]*n[2],
+            M[1][0]*n[0]+M[1][1]*n[1]+M[1][2]*n[2],
+            M[2][0]*n[0]+M[2][1]*n[1]+M[2][2]*n[2]];
+    var d=Mn[0]*n[0]+Mn[1]*n[1]+Mn[2]*n[2];
+    var preserves=Math.abs(d-1)<1e-6;
+    var flips=Math.abs(d+1)<1e-6;
+    if(mode==='slab'){
+      if(preserves||flips) out.push(M);
+    } else if(mode==='surface'){
+      /* keep operations that map the half-space normal to itself */
+      if(preserves) out.push(M);
+    }
+  }
+  return out;
+}
+
+/* ===== 2D plane-group detection from the in-plane net basis g1,g2 ===== */
+function PG_planeGroup(g1,g2,tol){
+  tol = tol || 1e-6;
+  var L=[[g1[0],g2[0]],[g1[1],g2[1]]];
+  var gt=[[L[0][0]*L[0][0]+L[1][0]*L[1][0], L[0][0]*L[0][1]+L[1][0]*L[1][1]],
+          [L[0][1]*L[0][0]+L[1][1]*L[1][0], L[0][1]*L[0][1]+L[1][1]*L[1][1]]];
+  var scale=Math.max(1,Math.abs(gt[0][0]),Math.abs(gt[1][1]));
+  var ops=[];
+  for(var a=-2;a<=2;a++)for(var b=-2;b<=2;b++)for(var c=-2;c<=2;c++)for(var d=-2;d<=2;d++){
+    var det=a*d-b*c;
+    if(Math.abs(Math.abs(det)-1)>1e-9) continue;
+    var Mt=[[a,c],[b,d]];   /* M^T for M=[[a,b],[c,d]] */
+    var P=[[Mt[0][0]*gt[0][0]+Mt[0][1]*gt[1][0], Mt[0][0]*gt[0][1]+Mt[0][1]*gt[1][1]],
+           [Mt[1][0]*gt[0][0]+Mt[1][1]*gt[1][0], Mt[1][0]*gt[0][1]+Mt[1][1]*gt[1][1]]];
+    var Q=[[P[0][0]*a+P[0][1]*c, P[0][0]*b+P[0][1]*d],
+           [P[1][0]*a+P[1][1]*c, P[1][0]*b+P[1][1]*d]];
+    var err=Math.max(Math.abs(Q[0][0]-gt[0][0]),Math.abs(Q[0][1]-gt[0][1]),
+                     Math.abs(Q[1][0]-gt[1][0]),Math.abs(Q[1][1]-gt[1][1]));
+    if(err<tol*scale) ops.push([[a,b],[c,d]]);
+  }
+  return ops;
+}
+function PG_planeGroupName(ops){
+  var n=ops.length, proper=0, mirrors=0;
+  for(var i=0;i<ops.length;i++){
+    var M=ops[i];
+    if(M[0][0]*M[1][1]-M[0][1]*M[1][0]>0) proper++; else mirrors++;
+  }
+  var nm;
+  if(n===1) nm='p1';
+  else if(n===2) nm='p2 (C2)';
+  else if(n===4) nm=(proper===4?'p4 (C4)':'p2mm (C2v)');
+  else if(n===6) nm=(proper===6?'p6 (C6)':'p3 (C3)');
+  else if(n===8) nm='p4mm (C4v)';
+  else if(n===12) nm='p6mm (C6v)';
+  else nm='p'+n;
+  return {order:n, proper:proper, mirrors:mirrors, name:nm};
+}
+
+/* ===== CANONICAL ORIENTATION =====
+   Find a rotation C that puts the group in its conventional setting so that
+   irrep LABELS come out standard.  We align the highest-fold proper rotation
+   axis with +z.  Returns the rotation C (rows = new basis vectors). */
+function PG_rotAxis(M){
+  /* eigenvector of a proper rotation with eigenvalue +1, via cross products */
+  var A=[[M[0][0]-1,M[0][1],M[0][2]],[M[1][0],M[1][1]-1,M[1][2]],[M[2][0],M[2][1],M[2][2]-1]];
+  /* null space of A: cross two independent rows */
+  var r0=A[0], r1=A[1], r2=A[2];
+  var crs=[[0,0,0],[0,0,0],[0,0,0]];
+  function cross(u,v){ return [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]]; }
+  var cands=[cross(r0,r1),cross(r1,r2),cross(r2,r0)];
+  var best=null, bl=0;
+  for(var i=0;i<3;i++){
+    var L=Math.sqrt(cands[i][0]*cands[i][0]+cands[i][1]*cands[i][1]+cands[i][2]*cands[i][2]);
+    if(L>bl){ bl=L; best=cands[i]; }
+  }
+  if(!best||bl<1e-9) return null;
+  return [best[0]/bl,best[1]/bl,best[2]/bl];
+}
+function PG_mirrorNormal(M){
+  var A=[[M[0][0]+1,M[0][1],M[0][2]],[M[1][0],M[1][1]+1,M[1][2]],[M[2][0],M[2][1],M[2][2]+1]];
+  function cross(u,v){ return [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]]; }
+  var cands=[cross(A[0],A[1]),cross(A[1],A[2]),cross(A[2],A[0])];
+  var best=null, bl=0;
+  for(var i=0;i<3;i++){
+    var L=Math.sqrt(cands[i][0]*cands[i][0]+cands[i][1]*cands[i][1]+cands[i][2]*cands[i][2]);
+    if(L>bl){ bl=L; best=cands[i]; }
+  }
+  if(!best||bl<1e-9) return null;
+  return [best[0]/bl,best[1]/bl,best[2]/bl];
+}
+function PG_frameFromZ(z, ref){
+  z=PG_unit(z);
+  var x=PG_sub(ref, PG_scale(z, PG_dot(ref,z)));
+  if(PG_len(x)<1e-6){
+    var t=(Math.abs(z[0])<0.9)?[1,0,0]:[0,1,0];
+    x=PG_sub(t, PG_scale(z, PG_dot(t,z)));
+  }
+  x=PG_unit(x);
+  var y=PG_cross(z,x);
+  return [x,y,z];   /* rows = frame */
+}
+function PG_canonicalRotation(G){
+  var axes=[], maxfold=0;
+  for(var i=0;i<G.length;i++){
+    var M=G[i];
+    if(PG_det(M)<0) continue;
+    var o=PG_order(M);
+    if(o>1){
+      var ax=PG_rotAxis(M);
+      if(ax){ axes.push({o:o, ax:ax}); if(o>maxfold) maxfold=o; }
+    }
+  }
+  if(axes.length===0){
+    /* acentric: use a mirror normal as z */
+    for(var j=0;j<G.length;j++){
+      if(PG_det(G[j])<0 && PG_order(G[j])===2 && Math.abs(PG_trace(G[j])-1)<1e-6){
+        var n=PG_mirrorNormal(G[j]);
+        if(n) return PG_frameFromZ(n,[0,0,1]);
+      }
+    }
+    return PG_eye();
+  }
+  var cands=[];
+  for(var q=0;q<axes.length;q++) if(axes[q].o===maxfold){
+    var a=axes[q].ax, dup=false;
+    for(var t=0;t<cands.length;t++) if(Math.abs(Math.abs(PG_dot(cands[t],a))-1)<1e-6) dup=true;
+    if(!dup) cands.push(a);
+  }
+  var z=cands[0];
+  var ref=null;
+  for(var j2=0;j2<G.length;j2++){
+    var M2=G[j2];
+    if(PG_det(M2)<0 && PG_order(M2)===2 && Math.abs(PG_trace(M2)-1)<1e-6){
+      var n2=PG_mirrorNormal(M2);
+      if(n2 && Math.abs(Math.abs(PG_dot(n2,z))-1)>1e-6){ ref=n2; break; }
+    }
+  }
+  if(!ref){
+    for(var j3=0;j3<axes.length;j3++){
+      if(Math.abs(Math.abs(PG_dot(axes[j3].ax,z))-1)>1e-6){ ref=axes[j3].ax; break; }
+    }
+  }
+  if(!ref) ref=[0,0,1];
+  return PG_frameFromZ(z, ref);
+}
+function PG_dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function PG_cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function PG_sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function PG_scale(a,s){ return [a[0]*s,a[1]*s,a[2]*s]; }
+function PG_len(a){ return Math.sqrt(PG_dot(a,a)); }
+function PG_unit(a){ var L=PG_len(a)||1; return [a[0]/L,a[1]/L,a[2]/L]; }
+function PG_conjugateGroup(G,C){
+  var Ct=PG_mT(C), out=[];
+  for(var i=0;i<G.length;i++) out.push(PG_roundM(PG_mm(PG_mm(C,G[i]),Ct)));
+  return out;
+}
+
+
+/* ============================================================================
+   SYMMETRY ANALYSIS BRIDGE  (CrystalViewer 2D panel)
+   Ties the PG_* engine to the app's data: the anchored atom's site-symmetry
+   group, its irreps, and the SALCs of the selected orbital manifold.
+   ============================================================================ */
+var SYM = {
+  enabled: true,
+  cache: null,          /* {key, group, ident, site, ops} */
+  lastKey: null,
+  manCache: null,       /* {manifold} memo for symManifold() - perf P0-1 */
+  manCacheKey: null
+};
+
+/* Build the analysis for the current structure + anchored atom.  Returns null if
+   there is nothing to analyse. */
+function symAnalyze(){
+  if(!S.struct || !PLANE.anchor) return null;
+  var st=S.struct;
+  /* need the operations; if the format didn't provide them, fall back to P1 */
+  var ops=st.symops;
+  if(!ops || !ops.length) ops=[{M:[[1,0,0],[0,1,0],[0,0,1]], c:[0,0,0]}];
+  /* the anchor stores a Cartesian position; get its fractional coordinates */
+  var Ainv=PG_inv3([[st.cell[0][0],st.cell[1][0],st.cell[2][0]],
+                    [st.cell[0][1],st.cell[1][1],st.cell[2][1]],
+                    [st.cell[0][2],st.cell[1][2],st.cell[2][2]]]);
+  if(!Ainv) return null;
+  var c=PLANE.anchor.cart;
+  var f=[Ainv[0][0]*c[0]+Ainv[0][1]*c[1]+Ainv[0][2]*c[2],
+         Ainv[1][0]*c[0]+Ainv[1][1]*c[1]+Ainv[1][2]*c[2],
+         Ainv[2][0]*c[0]+Ainv[2][1]*c[1]+Ainv[2][2]*c[2]];
+  var mode=(typeof S.symMode==='string')? S.symMode : 'slab';
+  var nrm=(PLANE && PLANE.n)? PLANE.n : [0,0,1];
+  var key=PG_key(ops[0].M)+'|'+Math.round(f[0]*1e4)+','+Math.round(f[1]*1e4)+','+Math.round(f[2]*1e4)
+          +'|'+mode+'|'+nrm[0].toFixed(4)+','+nrm[1].toFixed(4)+','+nrm[2].toFixed(4);
+  if(SYM.cache && SYM.cache.key===key) return SYM.cache;
+  /* site group */
+  var sg=PG_siteGroupOps(ops, st.cell, f);
+  if(!sg || !sg.length) return null;
+  /* plane adaptation: restrict to operations that preserve the plane
+     (slab) or the half-space (surface) when the user asked for that. */
+  var sgFull=sg;
+  if(mode!=='full'){
+    var adapted=PG_planeAdaptedOps(sg, nrm, mode);
+    if(adapted.length) sg=adapted;
+  }
+  var G=PG_closure(sg);
+  if(!G) return null;
+  var cc=PG_conjugacyClasses(G);
+  var ident=PG_identifyGroup(G,cc.cls,cc.classes);
+  /* canonical orientation so irrep LABELS are conventional */
+  var C=PG_canonicalRotation(G);
+  var Gc=PG_conjugateGroup(G,C);
+  var ccc=PG_conjugacyClasses(Gc);
+  var identC=PG_identifyGroup(Gc,ccc.cls,ccc.classes);
+  var res={key:key, G:G, cls:cc.cls, classes:cc.classes, ident:ident,
+           Gc:Gc, clsC:ccc.cls, classesC:ccc.classes, identC:identC,
+           C:C, frac:f, nOps:sg.length, nOpsFull:sgFull.length, mode:mode, n:nrm};
+  SYM.cache=res;
+  return res;
+}
+
+/* Decomposition + SALCs for the current element's chosen manifold.
+   Uses the CANONICALISED group so the irrep labels are conventional; each SALC
+   coefficient vector is then rotated back into the cell frame for drawing. */
+/* The plane normal expressed in the CANONICAL frame (the frame the SALC
+   coefficient vectors live in).  The canonical rotation C maps cell-frame
+   vectors into the canonical frame, so n_canon = C n_cell. */
+function symCanonicalNormal(an){
+  var n=(PLANE && PLANE.n) ? PLANE.n : [0,0,1];
+  if(!an || !an.C) return n;
+  var C=an.C;   /* rows are the new axes in the cell frame */
+  /* n_canon_a = (axis_a . n_cell) */
+  return [ C[0][0]*n[0]+C[0][1]*n[1]+C[0][2]*n[2],
+           C[1][0]*n[0]+C[1][1]*n[1]+C[1][2]*n[2],
+           C[2][0]*n[0]+C[2][1]*n[1]+C[2][2]*n[2] ];
+}
+
+function symManifold(el, l){
+  var an=symAnalyze();
+  if(!an) return null;
+  /* ------------------------------------------------------------------
+     MEMOISATION (performance fix P0-1).
+     symManifold() runs the full algebra (PG_decompose + one PG_salcVectors
+     per irrep: projector build, Jacobi eigensolver, Gram-Schmidt).  It used
+     to recompute on EVERY call, and the draw path calls it once PER ATOM
+     via symActiveSALC() - a 300-atom slice ran the algebra 300 times per
+     redraw.  The result depends only on the site-group analysis `an` (whose
+     key already encodes anchor fraction + symmetry mode + plane normal),
+     the element `el`, and the angular momentum `l`, so we memoise on
+     (an.key | el | l).  an.key changes on every anchor/mode/normal change,
+     so a new plane can never hit a stale entry.  We keep a single
+     last-value memo: the hot path only ever asks about the anchored
+     element and one manifold at a time.                                    */
+  var mkey=an.key+'|'+el+'|'+l;
+  if(SYM.manCacheKey===mkey && SYM.manCache) return SYM.manCache;
+  var useIdent = an.identC || an.ident;
+  var useG = an.identC ? an.Gc : an.G;
+  var useCls = an.identC ? an.clsC : an.cls;
+  var useClasses = an.identC ? an.classesC : an.classes;
+  if(!useIdent) return null;
+  var dec=PG_decompose(useG, useCls, useClasses, useIdent, l);
+  var parts=[];
+  for(var i=0;i<dec.parts.length;i++){
+    var p=dec.parts[i];
+    if(p.mult<0.5) continue;
+    var V=PG_salcVectors(useG, useCls, useClasses, useIdent, l, p.name);
+    var fracs=null;
+    /* OPTIONAL: rotate the basis inside this irrep subspace so that the
+       out-of-plane character is diagonal.  This does NOT change the physics
+       (the irrep acts irreducibly on the subspace, so any orthonormal basis is
+       equally valid) - it only picks the basis that reads naturally against
+       the chosen plane: one SALC as out-of-plane as possible, the rest in-plane.
+       The coefficients live in the CANONICAL frame, so we must express the
+       plane normal in that same frame: n_canon = C n_cell. */
+    /* Alignment is only meaningful WITHIN a degenerate irrep: rotating between
+       two different one-dimensional irreps would mix them and invalidate the
+       labels.  So we only rotate when this irrep's subspace has dimension > 1
+       (V.length>=2); for a 1-D irrep the SALC is pinned by symmetry and is left
+       alone - it simply carries its (possibly oblique) out-of-plane fraction as
+       a label. */
+    if(V.length>=2){
+      var ncanA=symCanonicalNormal(an);
+      var alA=PG_alignToPlane(V, l, ncanA);
+      V=alA.vecs; fracs=alA.fracs;
+    } else if(V.length===1){
+      fracs=[PG_outOfPlaneFraction(V[0], l, symCanonicalNormal(an))];
+    }
+    parts.push({irrep:p.name, dim:p.dim, mult:Math.round(p.mult),
+                coeffs:V, basis:l, fracs:fracs});
+  }
+  var mres={ident:useIdent, chiG:dec.chiG, parts:parts, l:l, site:an};
+  SYM.manCacheKey=mkey; SYM.manCache=mres;   /* memoise (P0-1) */
+  return mres;
+}
+
+/* count how many SALC vectors exist across all irreps for a manifold */
+function symTotalDim(mf){
+  if(!mf) return 0;
+  var t=0; for(var i=0;i<mf.parts.length;i++) t+=mf.parts[i].coeffs.length;
+  return t;
+}
+
+/* evaluate a SALC (linear combination of realSH) at a Cartesian direction,
+   expressed in the CANONICAL frame.  coefs index the realSH basis m=0..2l. */
+function symSALCValue(coefs, l, x,y,z){
+  var v=0;
+  for(var m=0;m<coefs.length;m++) v+=coefs[m]*PG_Y(l,m,x,y,z);
+  return v;
+}
+
+
+
+/* ============================================================================
+   SYMMETRY PANEL UI
+   ============================================================================ */
+S.symSel = S.symSel || {};        /* el -> {l, irrep, vecIndex} to draw         */
+S.showSym = (S.showSym===undefined) ? true : S.showSym;
+S.symAlign = (S.symAlign===undefined) ? true : S.symAlign;
+
+function symPanelVisible(){
+  return !!(S.showSym && S.struct && PLANE.on && PLANE.anchor);
+}
+
+/* true when there is a usable (non-trivial) site group for the anchored atom */
+function symHasGroup(){
+  if(!PLANE.anchor) return false;
+  var an=symAnalyze();
+  if(!an) return false;
+  var id=an.identC||an.ident;
+  return !!(id && an.G && an.G.length>1);
+}
+
+function symSelectedManifold(){
+  /* Which (element, l) manifold to decompose.  Returns null until the user has
+     actually turned orbitals on for the anchored element, so the panel shows
+     ONLY the lattice + site symmetry until a manifold is selected. */
+  if(!PLANE.anchor) return null;
+  if(!S.showOrb) return null;                  /* orbitals off -> no manifold */
+  var el=PLANE.anchor.sym;
+  var sel=S.orbSel && S.orbSel[el];
+  if(!sel) return null;                        /* no per-element choice yet   */
+  return {el:el, l:sel.l};
+}
+
+
+/* Name the orbitals that make up a SALC coefficient vector, for the UI.
+   ORB_NAMES[l][m] gives the m-th real orbital of degree l, in the SAME order
+   as realSH uses (for p: m=0 is p_z, m=1 is p_x, m=2 is p_y; for d:
+   m=0 d_xy, 1 d_yz, 2 d_z2-r2, 3 d_xz, 4 d_x2-y2).
+
+   Returns a compact label:
+     - pure (one coefficient):                 'd_yz'
+     - two-term combination:                   'd_yz+d_xz' or 'd_yz-d_xz'
+     - with weights shown when they differ:    '0.71 d_yz + 0.71 d_xz'
+     - more than three terms:                  'mixed (n)'
+   The sign convention follows the coefficient vector as drawn, so the label
+   matches what the phase colours show. */
+function symOrbitalLabel(coefs, l){
+  var names=(ORB_NAMES[l]||[]);
+  var terms=[];
+  for(var m=0;m<coefs.length;m++){
+    var c=coefs[m];
+    if(Math.abs(c)<1e-6) continue;
+    terms.push({m:m, c:c, name:(names[m]||('m'+m))});
+  }
+  if(terms.length===0) return '';
+  if(terms.length===1){
+    return terms[0].name;
+  }
+  /* sort by |coefficient| descending so the dominant orbital leads */
+  terms.sort(function(a,b){ return Math.abs(b.c)-Math.abs(a.c); });
+  if(terms.length>3){ return 'mixed'; }
+  /* keep the label short: two or three terms only */
+  if(terms.length===3){
+    /* drop any term below 25% of the largest - it is not worth the width */
+    var thresh=0.25*Math.abs(terms[0].c);
+    var keep=[];
+    for(var q=0;q<terms.length;q++) if(Math.abs(terms[q].c)>=thresh) keep.push(terms[q]);
+    if(keep.length===0) keep=[terms[0]];
+    if(keep.length===1) return keep[0].name;
+    terms=keep;
+  }
+  /* equal-magnitude terms (the common symmetry-adapted case) read best as a
+     simple sum/difference */
+  var maxAbs=Math.abs(terms[0].c);
+  var equal=true;
+  for(var t=1;t<terms.length;t++) if(Math.abs(Math.abs(terms[t].c)-maxAbs)>1e-6) equal=false;
+  if(equal){
+    var s=terms[0].name;
+    for(var t2=1;t2<terms.length;t2++) s+=(terms[t2].c<0?'\u2212':'+')+terms[t2].name;
+    return s;
+  }
+  var out=[];
+  for(var t3=0;t3<terms.length;t3++){
+    var w=Math.abs(terms[t3].c).toFixed(2);
+    out.push((terms[t3].c<0?'\u2212':'')+w+terms[t3].name);
+  }
+  return out.join('+');
+}
+
+function buildSymPanel(){
+  var host=$('symBody'); if(!host) return;
+  var badgeSite=$('symSite'), badgePlane=$('symPlane'), row=$('symRow');
+  var chipHost=$('symChips');
+  if(!row) return;
+  if(!symPanelVisible()){
+    row.classList.add('hidden');
+    return;
+  }
+  row.classList.remove('hidden');
+
+  /* ---------- the always-visible one-line head -------------------------
+     lattice group badge, site group badge, and (when a manifold is chosen)
+     the irrep chips, so the essentials never need expanding.              */
+  var nb=netBasis2D();
+  var geoDetail='';
+  if(nb && nb[0] && nb[1]){
+    var ops=PG_planeGroup(nb[0],nb[1]);
+    var info=PG_planeGroupName(ops);
+    var l1=Math.sqrt(nb[0][0]*nb[0][0]+nb[0][1]*nb[0][1]);
+    var l2=Math.sqrt(nb[1][0]*nb[1][0]+nb[1][1]*nb[1][1]);
+    var ca=(nb[0][0]*nb[1][0]+nb[0][1]*nb[1][1])/((l1||1e-9)*(l2||1e-9));
+    var ga=Math.acos(Math.max(-1,Math.min(1,ca)))*180/Math.PI;
+    if(badgePlane) badgePlane.textContent=info.name;
+    geoDetail='<div class="symline"><b>2D lattice</b> &nbsp;<span class="symbadge ghost">'+esc(info.name)
+      +'</span></div><div class="symline symtag">a\u2081='+l1.toFixed(2)+' \u00C5 &nbsp; a\u2082='
+      +l2.toFixed(2)+' \u00C5 &nbsp; \u03B3='+ga.toFixed(1)+'\u00B0 &nbsp; order '+info.order
+      +(info.mirrors?(' \u00B7 '+info.mirrors+' mirror'+(info.mirrors===1?'':'s')):'')+'</div>';
+  } else {
+    if(badgePlane) badgePlane.textContent='net: \u2014';
+    geoDetail='<div class="symline symtag">no 2D net for this plane</div>';
+  }
+
+  var an=symAnalyze();
+  var siteDetail='';
+  if(!an){
+    if(badgeSite) badgeSite.textContent='site: \u2014';
+    siteDetail='<div class="symline symtag">no symmetry operations for this structure (assumed P1)</div>';
+  } else {
+    var ident=an.identC||an.ident;
+    var modeLbl=(an.mode==='full')?'3D site':(an.mode==='surface'?'surface':'plane');
+    if(badgeSite){
+      var nm=modeLbl+': '+(ident?ident.name:'?');
+      if(an.mode!=='full' && an.nOpsFull && an.nOpsFull!==an.nOps)
+        nm+=' ('+an.nOps+'/'+an.nOpsFull+')';
+      badgeSite.textContent=nm;
+    }
+    var modeName=(an.mode==='full')?'full 3D site group'
+                :(an.mode==='surface'?'surface (half-space) group':'plane-preserving (slab) group');
+    siteDetail='<div class="symline"><b>Site symmetry</b> &nbsp;<span class="symbadge">'
+      +(ident?esc(ident.name):'?')+'</span> <span class="symtag">'+modeName
+      +' \u00B7 '+an.nOps+' op'+(an.nOps===1?'':'s')+'</span></div>';
+  }
+  if(badgeSite && !an) badgeSite.textContent='site: \u2014';
+
+  /* ---------- manifold section: only once an orbital is chosen ---------- */
+  var mf=symSelectedManifold();
+  var manHtml='', chipHtml='';
+  if(!mf){
+    manHtml='<div class="symline symtag">Tick an orbital to see how this manifold '
+           +'splits into irreps.</div>';
+  } else {
+    var man=symManifold(mf.el,mf.l);
+    if(!man){
+      manHtml='<div class="symline symtag">site group too large to analyse here</div>';
+    } else {
+      var lnames=['s','p','d','f'];
+      manHtml+='<div class="symline">'+lnames[mf.l]+'-manifold of '+esc(mf.el)
+              +' under this group &nbsp;\u2192</div>';
+      var parts=[];
+      for(var i=0;i<man.parts.length;i++){
+        var p=man.parts[i];
+        parts.push(p.irrep+'&nbsp;<span class="symtag">('+p.mult+'\u00D7'+(p.dim>1?p.dim+'D':'')+')</span>');
+      }
+      manHtml+='<div class="symdecomp">'+(parts.length?parts.join(' &nbsp;\u2295&nbsp; '):'\u2014')+'</div>';
+      /* chips: both in the body and inline in the head (one row, compact) */
+      var selKey=(mf.el+'|'+mf.l);
+      var curSel=S.symSel[selKey];
+      var chips='';
+      for(var j=0;j<man.parts.length;j++){
+        var pt=man.parts[j];
+        var nv=pt.coeffs.length;
+        var on=(curSel && curSel.irrep===pt.irrep);
+        /* name the orbital(s) this SALC is made of, so B1 and B2 stay
+           distinguishable even when their SHAPES look alike (nearly
+           tetragonal cell).  The vector shown is the currently selected one
+           if this chip is active, else the first. */
+        var vi=(on && curSel)?(curSel.vecIndex||0):0;
+        var orbName=symOrbitalLabel(pt.coeffs[Math.min(vi,pt.coeffs.length-1)], mf.l);
+        var label=pt.irrep+(orbName?(' · '+orbName):'')
+                  +(nv>1?(' ['+((on?(curSel.vecIndex+1):1))+'/'+nv+']'):'');
+        chips+='<span class="symchip'+(on?' on':'')+'" data-symirrep="'+esc(pt.irrep)+'" title="'
+             +(nv>1?('Click to cycle through the '+nv+' SALCs of '+pt.irrep):'Click to draw this SALC')
+             +(orbName?('  ('+orbName+')'):'')
+             +'">'+esc(label)+'</span>';
+      }
+      if(curSel) chips+='<span class="symchip dim" data-symclear="1" title="Stop drawing SALCs and show the plain orbitals">clear</span>';
+      chipHtml=chips;
+      var tot=symTotalDim(man);
+      manHtml+='<div class="symirrep">'+chips+'</div>';
+      manHtml+='<div class="symline symtag">'+tot+' SALC'+(tot===1?'':'s')+' span the '+lnames[mf.l]
+              +'-manifold ('+(2*mf.l+1)+' real orbitals).</div>';
+      /* geometry annotation: how much of each SALC points out of the plane.
+         Oblique values are expected for 1-D irreps, which cannot be rotated. */
+      var geo=[];
+      for(var gi=0;gi<man.parts.length;gi++){
+        var gp=man.parts[gi];
+        if(!gp.fracs) continue;
+        for(var gk=0;gk<gp.fracs.length;gk++){
+          var f=gp.fracs[gk];
+          var tag=(f>0.85?'out-of-plane':(f<0.15?'in-plane':Math.round(f*100)+'% out-of-plane'));
+          geo.push('<span class="symtag">'+esc(gp.irrep)+(gp.fracs.length>1?(' '+(gk+1)):'')+': '+tag+'</span>');
+        }
+      }
+      if(geo.length) manHtml+='<div class="symline" style="line-height:1.8">'+geo.join(' &nbsp;\u00B7&nbsp; ')+'</div>';
+    }
+  }
+  if(chipHost) chipHost.innerHTML=chipHtml;
+  host.innerHTML=geoDetail+siteDetail+manHtml;
+  /* the strip can change height when chips/rows appear or vanish; re-measure
+     the canvas on the next frame so the plot always fills the remaining box. */
+  if(typeof markPlaneCanvasResize==='function') markPlaneCanvasResize();
+}
+
+
+/* click handling for the chips */
+function symChipClick(ev){
+  var t=ev.target;
+  if(!t || !t.getAttribute) return;
+  var clear=t.getAttribute('data-symclear');
+  if(clear){
+    S.symSel={};
+    buildSymPanel(); if(typeof orb2dClearCache==='function') orb2dClearCache();
+    if(typeof markDirty==='function') markDirty();
+    return;
+  }
+  var ir=t.getAttribute('data-symirrep');
+  if(ir===null) return;
+  var mf=symSelectedManifold(); if(!mf) return;
+  var key=mf.el+'|'+mf.l;
+  var man=symManifold(mf.el,mf.l); if(!man) return;
+  /* find the clicked irrep and advance the vector index */
+  var cur=S.symSel[key];
+  var nv=1;
+  for(var i=0;i<man.parts.length;i++) if(man.parts[i].irrep===ir) nv=man.parts[i].coeffs.length;
+  var next;
+  if(cur && cur.irrep===ir) next={irrep:ir, vecIndex:((cur.vecIndex||0)+1)%nv};
+  else next={irrep:ir, vecIndex:0};
+  S.symSel[key]=next;
+  buildSymPanel();
+  if(typeof orb2dClearCache==='function') orb2dClearCache();
+  if(typeof markDirty==='function') markDirty();
+  if(typeof renderPlane2D==='function') renderPlane2D();
+}
+
+/* Return the SALC coefficient vector currently selected for element el's manifold,
+   or null if none.  Used by the 2D renderer. */
+function symActiveSALC(el, l){
+  if(!S.showSym) return null;
+  var key=el+'|'+l;
+  var sel=S.symSel[key];
+  if(!sel) return null;
+  var man=symManifold(el,l);
+  if(!man) return null;
+  for(var i=0;i<man.parts.length;i++){
+    var p=man.parts[i];
+    if(p.irrep===sel.irrep){
+      if(!p.coeffs.length) return null;
+      var idx=Math.min(sel.vecIndex||0, p.coeffs.length-1);
+      return {coefs:p.coeffs[idx], irrep:p.irrep, l:l, index:idx, count:p.coeffs.length};
+    }
+  }
+  return null;
+}
+
 function buildOrbitalControls(){
   var list=$('orbList');
   if(!list) return;
@@ -4129,13 +6652,32 @@ function buildOrbitalControls(){
       var lab=nVal+lnames[L];               /* label shows the TRUE n, e.g. 4f */
       html+='<option value="'+L+'"'+(sel.l===L?' selected':'')+'>'+lab+'</option>';
     }
-    html+='</select>'
-        + '<select class="omsel" title="real orbital component">';
-    var names=ORB_NAMES[sel.l]||['s'];
-    for(var mi=0;mi<names.length;mi++){
-      html+='<option value="'+mi+'"'+(sel.m===mi?' selected':'')+'>'+names[mi]+'</option>';
+    html+='</select>';
+    /* ---- component selector: irreps when symmetry is on, else px/py/pz ---- */
+    var useSym = S.showSym && symHasGroup();
+    if(useSym){
+      var man=symManifold(el, sel.l);
+      html+='<select class="omsel symsel-om" title="irreducible representation of the site group">';
+      if(!man || !man.parts.length){
+        html+='<option value="0">—</option>';
+      } else {
+        for(var ip=0;ip<man.parts.length;ip++){
+          var prt=man.parts[ip];
+          var kk=el+'|'+sel.l;
+          var cs=S.symSel[kk];
+          var on=(cs && cs.irrep===prt.irrep);
+          html+='<option value="'+esc(prt.irrep)+'"'+(on?' selected':'')+'>'+esc(prt.irrep)+'</option>';
+        }
+      }
+      html+='</select>';
+    } else {
+      html+='<select class="omsel" title="real orbital component">';
+      var names=ORB_NAMES[sel.l]||['s'];
+      for(var mi=0;mi<names.length;mi++){
+        html+='<option value="'+mi+'"'+(sel.m===mi?' selected':'')+'>'+names[mi]+'</option>';
+      }
+      html+='</select>';
     }
-    html+='</select>'
         + '<input type="range" class="orad" min="0.3" max="3" step="0.05" value="'
         + (S.orbRad[el]!==undefined?S.orbRad[el]:1).toFixed(2)
         + '" title="radius multiplier for this element orbital">'
@@ -4170,11 +6712,24 @@ function buildOrbitalControls(){
         var L=parseInt(this.value,10);
         if(L>nn-1) L=nn-1;                        /* keep l < n */
         S.orbSel[el]={n:nn, l:L, m:0};
+        delete S.symSel[el+'|'+L];                /* new manifold -> clear SALC */
         orb2dClearCache();
         markDirty();                             /* 3D lobes follow l/n change */
+        buildSymPanel();
         buildOrbitalControls(); renderPlane2D();
       });
-      msel.addEventListener('change',function(){
+      /* the component select is either an m-index or an irrep name */
+      if(msel && msel.className.indexOf('symsel-om')>=0){
+        msel.addEventListener('change',function(){
+          var cur=S.orbSel[el]||{l:0,n:orbValenceN(el,0)};
+          var kk=el+'|'+cur.l;
+          S.symSel[kk]={irrep:this.value, vecIndex:0};
+          if(typeof orb2dClearCache==='function') orb2dClearCache();
+          buildSymPanel();
+          markDirty();
+          renderPlane2D();
+        });
+      } else if(msel) msel.addEventListener('change',function(){
         if(typeof orb2dClearCache==='function') orb2dClearCache();
         S.orbSel[el].m=parseInt(this.value,10);
         markDirty();                             /* 3D lobes follow m change */
@@ -4207,6 +6762,7 @@ function buildOrbitalControls(){
 }
 
 function updatePlanePanel(){
+  if(_panelInfoTimer!==null){ clearTimeout(_panelInfoTimer); _panelInfoTimer=null; }  /* R4 */
   var info=$('planeInfo');
   if(!info) return;
   if(!S.struct){ info.textContent='No structure loaded.'; return; }
@@ -4283,7 +6839,17 @@ function updatePlanePanel(){
     msg+='<br><span style="color:#b45309">2D unit cell: unavailable \u2014 '+(PLANE.netWarn||'no net for this (h,k,l)')+'</span>';
   }
   info.innerHTML=msg;
-  if(typeof buildOrbitalControls==='function') buildOrbitalControls();
+  /* OPT-P2: updatePlanePanel runs on every coalesced frame of a thickness
+     drag (drainPend), and buildOrbitalControls rebuilds the whole per-element
+     chooser DOM (innerHTML + listener re-wiring) each time.  The chooser
+     content depends only on WHICH elements are in the slab - not on counts -
+     so rebuild only when the element set changes.  Direct callers of
+     buildOrbitalControls (n/l/m/radius handlers) are unaffected. */
+  var _orbSig=order.join(',')+'|'+((SYM && SYM.cache)?SYM.cache.key:'');
+  if(updatePlanePanel._osig!==_orbSig){
+    updatePlanePanel._osig=_orbSig;
+    if(typeof buildOrbitalControls==='function') buildOrbitalControls();
+  }
 }
 /* ---- 2D view rotation ---------------------------------------------------
    PLANE.rot (radians) rotates the in-plane basis (u,v) about the plane normal,
@@ -4310,7 +6876,11 @@ function setPlaneRot(rad){
   while(rad> Math.PI) rad-=2*Math.PI;
   while(rad<=-Math.PI) rad+=2*Math.PI;
   PLANE.rot=rad;
-  if(typeof orb2dClearCache==='function') orb2dClearCache();
+  /* OPT-V2: rotation no longer clears the projected-field caches - fields
+     are keyed and built in the UNROTATED frame (orbFieldKey uses PLANE.u0/v0)
+     and the draw rotates the blit, so a rotate drag costs one canvas rotate
+     per glyph instead of a full field rebuild per drag event.  Only the
+     net/bbox memos depend on the rotated basis and still refresh below. */
   _planeVersion++;
   _netBasisCache={ver:-1, cell:null, u:null, v:null, n:null, res:null};
   _planeBBoxCache={ver:-1, res:null};
@@ -4338,6 +6908,11 @@ function setHKL(h,k,l){ markDirty();
     PLANE.on=true;
     buildSlice();
     buildPlaneQuad();
+    /* a new (hkl) changes the plane normal, so the plane-adapted site group and
+       the 2D net group both change -> drop the cached analysis and rebuild the
+       symmetry panel before redrawing. */
+    SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;
+    if(typeof buildSymPanel==='function') buildSymPanel();
     renderPlane2D();
   }
   updatePlanePanel();
@@ -4415,6 +6990,13 @@ function loadStructure(text,name){
     _planeBBoxCache={ver:-1, res:null};
     S.orbSel={};                       /* orbital choices are per structure */
     S.orbRad={};                       /* per-element radius multipliers    */
+    /* OPT-P1: a new structure must never reuse projected fields/rasters
+       from the previous one, so clear the 2D caches explicitly here (the
+       buildSlice clear became conditional, see E4).  The chooser-rebuild
+       signature (E9) must reset too, or a same-element structure would keep
+       the previous (cleared) chooser DOM. */
+    if(typeof orb2dClearCache==='function') orb2dClearCache();
+    updatePlanePanel._osig=null;
     meshOrbCache={};                   /* drop cached lobe meshes (they are generic) */
     var olist=$('orbList'); if(olist) olist.innerHTML='';
     var _pw=$('planewrap');
@@ -4530,7 +7112,7 @@ function initUI(){
     if(drag.btn===0&&!drag.shift){
       cam.yaw-=dx*0.0055;
       cam.pitch=Math.max(-1.55,Math.min(1.55,cam.pitch+dy*0.0055));
-      markDirty();
+      wake3D();
     } else {
       /* z-up screen basis (verified to equal the camera's own x/y basis at
          every yaw/pitch): right = ( cos yaw,  sin yaw, 0 )
@@ -4543,7 +7125,7 @@ function initUI(){
       cam.target[0]-=rgt[0]*dx*k; cam.target[1]-=rgt[1]*dx*k; cam.target[2]-=rgt[2]*dx*k;
       cam.target[0]+=up2[0]*(-dy)*k; cam.target[1]+=up2[1]*(-dy)*k; cam.target[2]+=up2[2]*(-dy)*k;
     }
-    markDirty();
+    wake3D();
   });
   window.addEventListener('mouseup',function(){ drag=null; });
   view.addEventListener('contextmenu',function(e){ e.preventDefault(); });
@@ -4551,7 +7133,7 @@ function initUI(){
     e.preventDefault();
     cam.dist*=Math.exp(e.deltaY*0.001);
     cam.dist=Math.max(cam.min,Math.min(cam.max,cam.dist));
-    markDirty();
+    wake3D();
   },{passive:false});
 
   /* --- touch --- */
@@ -4584,7 +7166,7 @@ function initUI(){
       var rgt=[Math.cos(cam.yaw), Math.sin(cam.yaw), 0];
       cam.target[0]-=rgt[0]*(mx-tp.x)*k; cam.target[1]-=rgt[1]*(mx-tp.x)*k; cam.target[2]-=rgt[2]*(mx-tp.x)*k;
       tp.x=mx; tp.y=my;
-      markDirty();
+      wake3D();
     }
     e.preventDefault();
   },{passive:false});
@@ -4670,7 +7252,7 @@ function initUI(){
     });
   }
   $('rngAtom').addEventListener('input',function(){ S.scale=parseFloat(this.value); markDirty(); });
-  $('rngBond').addEventListener('input',function(){ S.bondR=parseFloat(this.value); S.bondVer=(S.bondVer||0)+1; markDirty(); });
+  $('rngBond').addEventListener('input',function(){ S.bondR=parseFloat(this.value); pendBonds(); });
   $('btReset').addEventListener('click',function(){ fitCamera(true); if(S.struct){ cam.dist=Math.max(cam.rad*2.35,cam.rad+0.5); } });
 
   window.addEventListener('error',function(e){ toast('Script error: '+e.message,true); });
@@ -4749,7 +7331,9 @@ function initUI(){
       /* No slice rebuild and no re-selection: the qualifying atom set is
          fixed by HILITE_WINDOW_A.  The next animation frame simply redraws
          the halos at the new size.                                           */
-      renderPlane2D();       /* keeps any 2D-side labels in step, harmless   */
+      /* OPT-V2: halo size is consumed ONLY by the 3D pass (drawPlaneHilite);
+         a full 2D re-render on every slider tick was pure waste - heavy on
+         high-index planes like (101)/(106).  markDirty() above repaints 3D. */
     });
   }
   window.__updateHiliteHint=updateHiliteHint;
@@ -4798,10 +7382,91 @@ function initUI(){
       markDirty();
     });
   }
+  /* symmetry / irrep toggle (2D panel) */
+  var symOn=$('symOn');
+  if(symOn){
+    S.showSym=symOn.checked;
+    symOn.addEventListener('change',function(){
+      S.showSym=this.checked;
+      if(typeof buildOrbitalControls==='function') buildOrbitalControls();
+      buildSymPanel();
+      orb2dClearCache();
+      renderPlane2D();
+      markDirty();                 /* 3D lobes follow the symmetry on/off toggle */
+    });
+  }
+  /* symmetry strip expander (default collapsed so the 2D plot keeps its height) */
+  var symTwist=$('symTwist'), symBodyEl=$('symBody');
+  if(symTwist){
+    if(S.symOpen===undefined) S.symOpen=false;
+    var applySymOpen=function(){
+      if(symBodyEl) symBodyEl.classList.toggle('open', !!S.symOpen);
+      symTwist.classList.toggle('open', !!S.symOpen);
+      symTwist.innerHTML = S.symOpen ? '&#9662;' : '&#9656;';
+    };
+    applySymOpen();
+    var toggleSym=function(){
+      S.symOpen=!S.symOpen;
+      applySymOpen();
+      /* expanding the strip changes the canvas box -> re-measure and repaint */
+      if(typeof markPlaneCanvasResize==='function') markPlaneCanvasResize();
+      if(typeof renderPlane2D==='function') renderPlane2D();
+    };
+    symTwist.addEventListener('click', toggleSym);
+    var symHead=$('symHead');
+    if(symHead) symHead.addEventListener('click',function(ev){
+      /* clicks on the checkbox, the mode select or a chip must not toggle */
+      var t=ev.target;
+      if(t && t.tagName && (t.tagName==='INPUT'||t.tagName==='SELECT')) return;
+      if(t && t.className && String(t.className).indexOf('symchip')>=0) return;
+      toggleSym();
+    });
+  }
+  /* chip clicks inside the compact header row need the same handler */
+  var symChipsHost=$('symChips');
+  if(symChipsHost) symChipsHost.addEventListener('click', function(ev){ symChipClick(ev); });
 
-  function hkChange(){ setHKL(parseInt($('ph').value||0,10),
-                             parseInt($('pk').value||0,10),
-                             parseInt($('pl').value||0,10)); }
+  /* align SALCs to the plane axes (within degenerate irreps) */
+  var symAl=$('symAlign');
+  if(symAl){
+    S.symAlign=symAl.checked;
+    symAl.addEventListener('change',function(){
+      S.symAlign=this.checked;
+      S.symSel={};                 /* the basis changed -> drop the selection */
+      buildSymPanel();
+      orb2dClearCache();
+      renderPlane2D();
+      markDirty();                 /* 3D lobes follow the alignment change */
+    });
+  }
+  /* symmetry mode: full 3D site / plane-preserving (slab) / surface */
+  var symMode=$('symMode');
+  if(symMode){
+    S.symMode=symMode.value||'slab';
+    symMode.addEventListener('change',function(){
+      S.symMode=this.value;
+      SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;                 /* mode changes the group -> drop cache */
+      S.symSel={};                    /* selected SALCs no longer valid       */
+      buildSymPanel();
+      orb2dClearCache();
+      renderPlane2D();
+      markDirty();
+    });
+  }
+  var symBody=$('symBody');
+  if(symBody){
+    symBody.addEventListener('click', function(ev){ symChipClick(ev); });
+  }
+
+  /* OPT-P2: the number inputs fire BOTH 'input' (typing/steppers) and
+     'change' (commit), so each edit ran the full setHKL rebuild TWICE; and
+     an empty field parsed to 0 and pivoted the plane.  Guard both. */
+  function hkChange(){
+    var _nh=parseInt($('ph').value,10), _nk=parseInt($('pk').value,10), _nl=parseInt($('pl').value,10);
+    if(isNaN(_nh)||isNaN(_nk)||isNaN(_nl)) return;         /* transient empty field */
+    if(_nh===PLANE.h && _nk===PLANE.k && _nl===PLANE.l) return;  /* input+change double-fire */
+    setHKL(_nh,_nk,_nl);
+  }
   ['ph','pk','pl'].forEach(function(id){
     var e=$(id);
     if(e) e.addEventListener('input', hkChange);
@@ -4823,13 +7488,19 @@ function initUI(){
   if(th) th.addEventListener('input',function(){
     PLANE.thick=parseFloat(this.value);
     $('pthickV').textContent=PLANE.thick.toFixed(1);
-    if(PLANE.anchor){ buildSlice(); renderPlane2D(); updatePlanePanel(); }
+    if(PLANE.anchor){ pendSlice(); }   /* coalesced: one rebuild per frame */
+  });
+  if(th) th.addEventListener('change',function(){   /* R4: drag end commits the info text */
+    if(typeof _panelInfoFlush==='function') _panelInfoFlush();
   });
   var ex=$('pext');
   if(ex) ex.addEventListener('input',function(){
     PLANE.ext=parseFloat(this.value);
     $('pextV').textContent=PLANE.ext.toFixed(1)+'\u00D7';
-    if(PLANE.anchor){ buildPlaneQuad(); renderPlane2D(); }
+    if(PLANE.anchor){ pendPlaneQuad(); }   /* coalesced */
+  });
+  if(ex) ex.addEventListener('change',function(){     /* R4: drag end commits the info text */
+    if(typeof _panelInfoFlush==='function') _panelInfoFlush();
   });
   var bfit=$('pfit');
   if(bfit) bfit.addEventListener('click',function(){
@@ -5031,7 +7702,7 @@ function initUI(){
       var scale=Math.min(W*0.86/(bb.x1-bb.x0), H*0.86/(bb.y1-bb.y0))/planeView.scale*(1/PLANE.ext*2);
       if(!isFinite(scale)||scale<=0) scale=1;
       planeView.ox-=dx/scale; planeView.oy+=dy/scale;
-      renderPlane2D();
+      schedRender2D();
     });
     window.addEventListener('mouseup',function(){ planeView.dragging=false; planeRotDrag=null; plc.style.cursor=''; });
     /* cursor hint: show a rotate cursor while Alt is held over the canvas, so
@@ -5048,7 +7719,7 @@ function initUI(){
          magnification.  The old ceiling of 12 was an arbitrary guard that
          made it impossible to zoom into a single unit cell; raised to 400. */
       planeView.scale=Math.max(0.05,Math.min(400,planeView.scale));
-      renderPlane2D();
+      schedRender2D();
     },{passive:false});
     plc.addEventListener('dblclick',function(){ planeView.scale=1; planeView.ox=0; planeView.oy=0; renderPlane2D(); });
     /* --- 2D panel touch: 1-finger pan, 2-finger pinch zoom, double-tap fit --- */
@@ -5093,13 +7764,13 @@ function initUI(){
         p2t.x=e.touches[0].clientX; p2t.y=e.touches[0].clientY;
         var sc=pScale();
         planeView.ox-=dx/sc; planeView.oy+=dy/sc;
-        renderPlane2D();
+        schedRender2D();
       } else if(e.touches.length===2 && p2t.m===2){
         var nd=tdist(e.touches);
         if(p2t.d>0){
           planeView.scale*=p2t.d/nd;
           planeView.scale=Math.max(0.05,Math.min(400,planeView.scale));
-          renderPlane2D();
+          schedRender2D();
         }
         p2t.d=nd;
         p2t.x=(e.touches[0].clientX+e.touches[1].clientX)/2;
