@@ -2,8 +2,54 @@
 <!--
   Generic Crystal Viewer
    ----------------------
-     
-  Version: 1.1
+
+  Version: 2.1.0
+  Build:   CV-2026-10-18-RH1
+
+  A single-file, dependency-free crystal-structure viewer.  Load a structure
+  (CIF, Materials-Project JSON, or a pw.x input deck), pick an (h,k,l) slice
+  plane, anchor an atom, and inspect its site symmetry, the irreps its orbital
+  manifold splits into, and the symmetry-adapted orbitals (SALCs) drawn both
+  as 2D projections and 3D lobes.
+
+  CAPABILITIES
+    - Formats: CIF (with or without symmetry ops), Materials-Project JSON,
+      Quantum ESPRESSO pw.x decks.  Structures that declare no symmetry
+      operations are analysed as assumed P1 and labelled as such.
+    - Space groups: all 230 ITA space groups generate from the H-M symbol
+      (plus :o1/:o2/:R/:H setting suffixes).
+    - Point groups: all 32 crystallographic point groups; site groups are
+      identified, decomposed, and labelled per ITA/Bilbao conventions.
+    - Symmetry modes: full (3D site group), slab (operations that preserve
+      the plane), surface (operations that keep the half-space).
+    - Site-class partition: symmetry-inequivalent atoms are grouped and can
+      be overlaid independently (mixed-class SALC display).
+
+  INVARIANTS A MAINTAINER MUST KNOW
+    - Rotation comparison (PG_closure / PG_order) uses PG_mClose with
+      PG_MCLOSE_TOL = 1e-4, not exact snapped keys.  This is required for
+      non-orthogonal cells (rhombohedral axes), whose site-group rotations
+      are irrational; a 1e-7 key grid cannot close them.
+    - Irrep labels follow ITA/Bilbao: a single 2-D irrep is E / Eg / Eu
+      (not E1/E2); only groups with TWO independent 2-D irreps keep E1/E2
+      (C6, C6h, C6v, D6, D6h).  Complex-conjugate partner rows carry an
+      internal '_c' suffix and are merged at decomposition time.
+    - FRAC_TOL = 1e-4 is the shared fractional-coordinate tolerance for
+      site matching and the analysis-key grid.
+    - Analysis/manifold/representation caches are bounded (LRU); the WebGL
+      context is rebuilt on context loss; the DOM lookup cache stores only
+      successful hits.
+
+  TESTING
+    A Node test suite lives in test/ (no dependencies; run `node --test`).
+    It loads this file's script block in a DOM stub and covers the symmetry
+    engine, the character tables (axioms + ITA/Bilbao decompositions), all
+    230 space-group symbols, and the decks/ structure fixtures.  Point the
+    suite at any build with CV_FILE=<path>.
+
+  HISTORY
+    The pass-by-pass build narrative is in CHANGELOG.md.
+
   Copyright (c) 2026 Giorgio Levy
   SPDX-License-Identifier: MIT
 
@@ -295,8 +341,19 @@ details summary:hover{color:var(--accent)}
 .symbadge.ghost{opacity:.72;font-weight:500}
 .symbadge.geo{opacity:.8;font-weight:500}
 .symchips-inline{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
-#symBody{max-height:34vh;overflow-y:auto;padding:0 13px 8px 13px;
+#symBody{max-height:30vh;overflow-y:auto;padding:0 13px 8px 13px;
          display:none;flex-direction:column;gap:5px}
+/* N-fix2: per-class <details> sections - summary is a mini header; the
+   details content stays inside the scrollable body so the 2D canvas keeps
+   its size. */
+details.symsec{border:1px solid var(--line);border-radius:7px;margin:2px 0;padding:2px 6px;background:rgba(128,128,128,0.04)}
+details.symsec>summary{list-style:none;display:block;user-select:none}
+details.symsec[open]>summary{border-bottom:1px dashed var(--line);margin-bottom:4px}
+/* O1d (polish): classes with no atoms inside the drawn slab - dimmed card so
+   the 'selection changes nothing' state is explained by the card itself. */
+details.symsec-empty{opacity:0.5;border-style:dashed}
+details.symsec-empty>summary{filter:grayscale(0.6)}
+.symsectag-empty{color:#e2a03c;font-weight:600}
 #symBody.open{display:flex}
 .symsel{background:var(--in);color:var(--fg);border:1px solid var(--in-line);border-radius:6px;padding:1px 4px;font-size:11px}
 .symline{font-size:11.5px;color:var(--fg2)}
@@ -532,6 +589,7 @@ details summary:hover{color:var(--accent)}
     <option value="slab" selected>plane (slab)</option>
     <option value="surface">surface</option>
    </select>
+   <select id="symClass" class="symsel" title="N2 (Phase 4): which SITE CLASS the symmetry strip analyses. The anchor keeps placing the plane; this picker only chooses the analysis site - chips of several classes can stay selected for a mixed overlay."></select>
   </div>
   <div id="symBody"></div>
  </div>
@@ -541,8 +599,46 @@ details summary:hover{color:var(--accent)}
 
 <script>
 'use strict';
+/* BUILD TAG - bump on every release.  Shown in the header comment (B1),
+   the on-screen badge (B3) and the console banner (B2). */
+/* v2.2.15 SG5: TGEN re-baselined to ITA-exact standard settings (all 230 groups
+   verified by exact operation-set equality against the spglib reference);
+   centring-aware closure (SG_ckey); composition dedupe; the R-lattice mirror
+   carrier refusal is removed - R 3m / R -3m now generate exactly. */
+/* v2.2.16: ':R' rhombohedral-axes symbols generate (spglib primitive '3*' settings,
+   op counts 3/6/6/6/6/12/12); RX01 matrix; 'r' primitive centring added. */
+/* v2.2.17: origin-choice suffixes. ':o1'/':o2' symbols generate the
+   corresp. origin setting of the 24 origin-twin groups (exact op-set
+   equality to spglib references; unsuffixed = app-standard setting).
+   24 new TGEN keys (total 261). */
+/* v2.2.17 FIX (within this build): ITA 125-130 key labels corrected to the
+   ITA-standard spellings (P4/nbm P4/nnc P4/mbm P4/mnc P4/nmm P4/ncc);
+   the previously shipped (2.2.15/2.2.16) six keys carried the right op sets
+   under permuted names - symbols P 4/m b m, P 4/m n c, P 4/n b m, P 4/n c c,
+   P 4/n m m, P 4/n n c returned the WRONG group's operations.  Also adds the
+   modern e-glide alias spellings Aem2 Aea2 Cmce Cmme Ccce. */
+/* v2.2.18 UX: 1a chip hygiene on element-changing re-anchor (chips of other
+   elements die; picker-focused chips survive; same-element keeps working);
+   1b chip x clears every manifold key of its class (zombie-chip fix);
+   2 plain orbital menu renders DISABLED with tooltip while a chip-selected
+   SALC owns that element's glyphs. */
+/* v2.2.19 UX-2: f3 the per-row SALC menu follows a class OF ITS OWN element
+   (focus class honoured only when same-element; fixes Na-anchored Cl menu
+   writing Na SALC selections).  f4 manifold change clears every chip of
+   that element (the class-keyed successor of the dead legacy key). */
+var CV_VERSION='2.1.0';
+var CV_BUILD='CV-2026-10-18-RH1'
+/* K0: STRUCTURE REVISION.  Monotonic counter bumped by every successful
+   loadStructure(); the value is stamped on S.struct.rev and leads the
+   symAnalyze() analysis key, so two DIFFERENT structures can never alias
+   in the analysis caches even when the remaining key parts agree (the
+   old key hashed only ops[0] - the identity op of nearly every CIF).
+   Re-loading the SAME text bumps the rev too - a conservative, correct
+   choice: re-analysis of one structure costs one PG_closure run, while
+   a stale alias would corrupt the irrep chips. */
+var S_structRev=0;
 var BOHR = 0.529177210903;
-var EXAMPLE_CIF = "# Sodium chloride (rocksalt) - conventional cubic cell, FULL symmetry listed\n# Reference: halite, a = 5.6402 A, space group P m -3 m (No. 221).\n# The CONVENTIONAL cubic cell is used (4 Na + 4 Cl), so the nearest Na-Cl\n# contacts are at a/2 = 2.82 A and the octahedral bonding network is visible.\n# All 48 symmetry operations are given explicitly so the 2D panel can derive\n# the true site-symmetry group of the anchored atom and how it changes with\n# the chosen (h,k,l) plane.\ndata_NaCl_rocksalt\n_chemical_name_common             'Sodium chloride (rocksalt / halite)'\n_chemical_formula_structural      NaCl\n_chemical_formula_sum             'Na4 Cl4'\n_cell_length_a                    5.6402\n_cell_length_b                    5.6402\n_cell_length_c                    5.6402\n_cell_angle_alpha                 90\n_cell_angle_beta                  90\n_cell_angle_gamma                 90\n_cell_volume                      179.43\n_cell_formula_units_Z             4\n_space_group_name_H-M_alt         'P m -3 m'\n_symmetry_Int_Tables_number       221\nloop_\n_space_group_symop_id\n_space_group_symop_operation_xyz\n'x, y, z'\n'x, y, -z'\n'x, -y, z'\n'x, -y, -z'\n'-x, y, z'\n'-x, y, -z'\n'-x, -y, z'\n'-x, -y, -z'\n'x, z, y'\n'x, z, -y'\n'x, -z, y'\n'x, -z, -y'\n'-x, z, y'\n'-x, z, -y'\n'-x, -z, y'\n'-x, -z, -y'\n'y, x, z'\n'y, x, -z'\n'y, -x, z'\n'y, -x, -z'\n'-y, x, z'\n'-y, x, -z'\n'-y, -x, z'\n'-y, -x, -z'\n'y, z, x'\n'y, z, -x'\n'y, -z, x'\n'y, -z, -x'\n'-y, z, x'\n'-y, z, -x'\n'-y, -z, x'\n'-y, -z, -x'\n'z, x, y'\n'z, x, -y'\n'z, -x, y'\n'z, -x, -y'\n'-z, x, y'\n'-z, x, -y'\n'-z, -x, y'\n'-z, -x, -y'\n'z, y, x'\n'z, y, -x'\n'z, -y, x'\n'z, -y, -x'\n'-z, y, x'\n'-z, y, -x'\n'-z, -y, x'\n'-z, -y, -x'\nloop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n_atom_site_occupancy\nNa1 Na 0.0000 0.0000 0.0000 1.0\nNa2 Na 0.0000 0.5000 0.5000 1.0\nNa3 Na 0.5000 0.0000 0.5000 1.0\nNa4 Na 0.5000 0.5000 0.0000 1.0\nCl1 Cl 0.5000 0.5000 0.5000 1.0\nCl2 Cl 0.5000 0.0000 0.0000 1.0\nCl3 Cl 0.0000 0.5000 0.0000 1.0\nCl4 Cl 0.0000 0.0000 0.5000 1.0\n";
+var EXAMPLE_CIF = "# Sodium chloride (rocksalt / halite) - conventional cubic cell, FULL symmetry listed.\n# Realistic centring-complete deck: space group F m -3 m (No. 225), all 192\n# operations explicitly given - the 48 point operations of m-3m composed\n# with the 4 F-centring translations (0,0,0), (0,1/2,1/2), (1/2,0,1/2),\n# (1/2,1/2,0).  In the real F-centred lattice all four Na positions of the\n# conventional cell are ONE symmetry orbit (and likewise Cl): every site has\n# the full m-3m point symmetry, so the site-class partition reports ONE Na\n# class and ONE Cl class.  a = 5.6402 A; the parser generates all 8 atoms\n# from the two asymmetric-unit sites; nearest Na-Cl contact a/2 = 2.82 A.\ndata_NaCl_rocksalt\n_chemical_name_common             'Sodium chloride (rocksalt / halite)'\n_chemical_formula_structural      NaCl\n_chemical_formula_sum             'Na4 Cl4'\n_cell_length_a                    5.6402\n_cell_length_b                   5.6402\n_cell_length_c                   5.6402\n_cell_angle_alpha                90\n_cell_angle_beta                 90\n_cell_angle_gamma                90\n_cell_volume                      179.43\n_cell_formula_units_Z            4\n_space_group_name_H-M_alt         'F m -3 m'\n_symmetry_Int_Tables_number      225\nloop_\n_space_group_symop_id\n_space_group_symop_operation_xyz\n1 'x, y, z'\n2 'x, y+1/2, z+1/2'\n3 'x+1/2, y, z+1/2'\n4 'x+1/2, y+1/2, z'\n5 'x, y, -z'\n6 'x, y+1/2, -z+1/2'\n7 'x+1/2, y, -z+1/2'\n8 'x+1/2, y+1/2, -z'\n9 'x, -y, z'\n10 'x, -y+1/2, z+1/2'\n11 'x+1/2, -y, z+1/2'\n12 'x+1/2, -y+1/2, z'\n13 'x, -y, -z'\n14 'x, -y+1/2, -z+1/2'\n15 'x+1/2, -y, -z+1/2'\n16 'x+1/2, -y+1/2, -z'\n17 '-x, y, z'\n18 '-x, y+1/2, z+1/2'\n19 '-x+1/2, y, z+1/2'\n20 '-x+1/2, y+1/2, z'\n21 '-x, y, -z'\n22 '-x, y+1/2, -z+1/2'\n23 '-x+1/2, y, -z+1/2'\n24 '-x+1/2, y+1/2, -z'\n25 '-x, -y, z'\n26 '-x, -y+1/2, z+1/2'\n27 '-x+1/2, -y, z+1/2'\n28 '-x+1/2, -y+1/2, z'\n29 '-x, -y, -z'\n30 '-x, -y+1/2, -z+1/2'\n31 '-x+1/2, -y, -z+1/2'\n32 '-x+1/2, -y+1/2, -z'\n33 'x, z, y'\n34 'x, z+1/2, y+1/2'\n35 'x+1/2, z, y+1/2'\n36 'x+1/2, z+1/2, y'\n37 'x, z, -y'\n38 'x, z+1/2, -y+1/2'\n39 'x+1/2, z, -y+1/2'\n40 'x+1/2, z+1/2, -y'\n41 'x, -z, y'\n42 'x, -z+1/2, y+1/2'\n43 'x+1/2, -z, y+1/2'\n44 'x+1/2, -z+1/2, y'\n45 'x, -z, -y'\n46 'x, -z+1/2, -y+1/2'\n47 'x+1/2, -z, -y+1/2'\n48 'x+1/2, -z+1/2, -y'\n49 '-x, z, y'\n50 '-x, z+1/2, y+1/2'\n51 '-x+1/2, z, y+1/2'\n52 '-x+1/2, z+1/2, y'\n53 '-x, z, -y'\n54 '-x, z+1/2, -y+1/2'\n55 '-x+1/2, z, -y+1/2'\n56 '-x+1/2, z+1/2, -y'\n57 '-x, -z, y'\n58 '-x, -z+1/2, y+1/2'\n59 '-x+1/2, -z, y+1/2'\n60 '-x+1/2, -z+1/2, y'\n61 '-x, -z, -y'\n62 '-x, -z+1/2, -y+1/2'\n63 '-x+1/2, -z, -y+1/2'\n64 '-x+1/2, -z+1/2, -y'\n65 'y, x, z'\n66 'y, x+1/2, z+1/2'\n67 'y+1/2, x, z+1/2'\n68 'y+1/2, x+1/2, z'\n69 'y, x, -z'\n70 'y, x+1/2, -z+1/2'\n71 'y+1/2, x, -z+1/2'\n72 'y+1/2, x+1/2, -z'\n73 'y, -x, z'\n74 'y, -x+1/2, z+1/2'\n75 'y+1/2, -x, z+1/2'\n76 'y+1/2, -x+1/2, z'\n77 'y, -x, -z'\n78 'y, -x+1/2, -z+1/2'\n79 'y+1/2, -x, -z+1/2'\n80 'y+1/2, -x+1/2, -z'\n81 '-y, x, z'\n82 '-y, x+1/2, z+1/2'\n83 '-y+1/2, x, z+1/2'\n84 '-y+1/2, x+1/2, z'\n85 '-y, x, -z'\n86 '-y, x+1/2, -z+1/2'\n87 '-y+1/2, x, -z+1/2'\n88 '-y+1/2, x+1/2, -z'\n89 '-y, -x, z'\n90 '-y, -x+1/2, z+1/2'\n91 '-y+1/2, -x, z+1/2'\n92 '-y+1/2, -x+1/2, z'\n93 '-y, -x, -z'\n94 '-y, -x+1/2, -z+1/2'\n95 '-y+1/2, -x, -z+1/2'\n96 '-y+1/2, -x+1/2, -z'\n97 'y, z, x'\n98 'y, z+1/2, x+1/2'\n99 'y+1/2, z, x+1/2'\n100 'y+1/2, z+1/2, x'\n101 'y, z, -x'\n102 'y, z+1/2, -x+1/2'\n103 'y+1/2, z, -x+1/2'\n104 'y+1/2, z+1/2, -x'\n105 'y, -z, x'\n106 'y, -z+1/2, x+1/2'\n107 'y+1/2, -z, x+1/2'\n108 'y+1/2, -z+1/2, x'\n109 'y, -z, -x'\n110 'y, -z+1/2, -x+1/2'\n111 'y+1/2, -z, -x+1/2'\n112 'y+1/2, -z+1/2, -x'\n113 '-y, z, x'\n114 '-y, z+1/2, x+1/2'\n115 '-y+1/2, z, x+1/2'\n116 '-y+1/2, z+1/2, x'\n117 '-y, z, -x'\n118 '-y, z+1/2, -x+1/2'\n119 '-y+1/2, z, -x+1/2'\n120 '-y+1/2, z+1/2, -x'\n121 '-y, -z, x'\n122 '-y, -z+1/2, x+1/2'\n123 '-y+1/2, -z, x+1/2'\n124 '-y+1/2, -z+1/2, x'\n125 '-y, -z, -x'\n126 '-y, -z+1/2, -x+1/2'\n127 '-y+1/2, -z, -x+1/2'\n128 '-y+1/2, -z+1/2, -x'\n129 'z, x, y'\n130 'z, x+1/2, y+1/2'\n131 'z+1/2, x, y+1/2'\n132 'z+1/2, x+1/2, y'\n133 'z, x, -y'\n134 'z, x+1/2, -y+1/2'\n135 'z+1/2, x, -y+1/2'\n136 'z+1/2, x+1/2, -y'\n137 'z, -x, y'\n138 'z, -x+1/2, y+1/2'\n139 'z+1/2, -x, y+1/2'\n140 'z+1/2, -x+1/2, y'\n141 'z, -x, -y'\n142 'z, -x+1/2, -y+1/2'\n143 'z+1/2, -x, -y+1/2'\n144 'z+1/2, -x+1/2, -y'\n145 '-z, x, y'\n146 '-z, x+1/2, y+1/2'\n147 '-z+1/2, x, y+1/2'\n148 '-z+1/2, x+1/2, y'\n149 '-z, x, -y'\n150 '-z, x+1/2, -y+1/2'\n151 '-z+1/2, x, -y+1/2'\n152 '-z+1/2, x+1/2, -y'\n153 '-z, -x, y'\n154 '-z, -x+1/2, y+1/2'\n155 '-z+1/2, -x, y+1/2'\n156 '-z+1/2, -x+1/2, y'\n157 '-z, -x, -y'\n158 '-z, -x+1/2, -y+1/2'\n159 '-z+1/2, -x, -y+1/2'\n160 '-z+1/2, -x+1/2, -y'\n161 'z, y, x'\n162 'z, y+1/2, x+1/2'\n163 'z+1/2, y, x+1/2'\n164 'z+1/2, y+1/2, x'\n165 'z, y, -x'\n166 'z, y+1/2, -x+1/2'\n167 'z+1/2, y, -x+1/2'\n168 'z+1/2, y+1/2, -x'\n169 'z, -y, x'\n170 'z, -y+1/2, x+1/2'\n171 'z+1/2, -y, x+1/2'\n172 'z+1/2, -y+1/2, x'\n173 'z, -y, -x'\n174 'z, -y+1/2, -x+1/2'\n175 'z+1/2, -y, -x+1/2'\n176 'z+1/2, -y+1/2, -x'\n177 '-z, y, x'\n178 '-z, y+1/2, x+1/2'\n179 '-z+1/2, y, x+1/2'\n180 '-z+1/2, y+1/2, x'\n181 '-z, y, -x'\n182 '-z, y+1/2, -x+1/2'\n183 '-z+1/2, y, -x+1/2'\n184 '-z+1/2, y+1/2, -x'\n185 '-z, -y, x'\n186 '-z, -y+1/2, x+1/2'\n187 '-z+1/2, -y, x+1/2'\n188 '-z+1/2, -y+1/2, x'\n189 '-z, -y, -x'\n190 '-z, -y+1/2, -x+1/2'\n191 '-z+1/2, -y, -x+1/2'\n192 '-z+1/2, -y+1/2, -x'\nloop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n_atom_site_occupancy\nNa1 Na 0.0000 0.0000 0.0000 1.0\nCl1 Cl 0.5000 0.5000 0.5000 1.0\n";
 var THEMES={
   light:{ bg:[0.925,0.945,0.968], box:[0.30,0.42,0.62], boxSc:[0.62,0.68,0.78], label:'#1d2430', halo:'rgba(255,255,255,0.92)',
           plane:[0.13,0.38,0.85], planeN:[0.85,0.42,0.08], hilite:[0.10,0.35,0.95] },
@@ -590,14 +686,27 @@ function esc(s){
 /* Cached DOM lookup.  document.getElementById() re-parses the selector and
    walks the tree on every call; the viewer looks up the same ~40 fixed ids
    repeatedly from the update paths (toggles, sliders, panel refresh).  The
-   nodes are static for the page lifetime, so memoise them.  A miss (id not in
-   the document) is cached as null and callers already guard for null. */
+   nodes are static for the page lifetime, so memoise them.  Only SUCCESSFUL
+   lookups are cached: a miss returns null but is NOT remembered, so a node
+   that does not exist yet (or is added later) is found on a subsequent call
+   instead of being pinned to null for the page lifetime.  Callers still
+   guard for null. */
 var _domCache = {};
 function $(id){
   var e = _domCache[id];
-  if(e === undefined){ e = document.getElementById(id) || null; _domCache[id] = e; }
+  if(e !== undefined) return e;
+  e = document.getElementById(id);
+  if(e) _domCache[id] = e;
   return e;
 }
+
+/* Fractional-coordinate tolerance: two fractional positions within FRAC_TOL
+   (per component) are treated as the SAME site, and the symmetry-analysis key
+   quantises fractions at the same 1e-4 grid.  Named so the site-matching and
+   key-building sites cannot drift apart.  Note this is NOT the tolerance used
+   for rotation-matrix snapping (PG_snap, ~1e-7..1e-9) or the SG engine's
+   translation wrap (1e-6); those are different physical quantities. */
+var FRAC_TOL=1e-4;
 
 /* ---------------- small vector / matrix helpers ---------------- */
 function vdot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
@@ -871,7 +980,8 @@ var SG_CENTRING = {
   'C': [[0,0,0],[0.5,0.5,0]],
   'I': [[0,0,0],[0.5,0.5,0.5]],
   'F': [[0,0,0],[0,0.5,0.5],[0.5,0,0.5],[0.5,0.5,0]],
-  'R': [[0,0,0],[2/3,1/3,1/3],[1/3,2/3,2/3]]
+  'R': [[0,0,0],[2/3,1/3,1/3],[1/3,2/3,2/3]],
+  'r': [[0,0,0]]
 };
 
 /* exact 3x3 helpers on integer/half-integer entries */
@@ -887,10 +997,32 @@ function SG_key(A,t){
   var s='';
   for(var i=0;i<3;i++){ for(var j=0;j<3;j++) s+=Math.round(A[i][j]*1e6)/1e6+','; }
   s+='|';
-  for(var k=0;k<3;k++) s+=Math.round(t[k]*1e6)/1e6+',';
+  /* SG-PASS step 3: WRAP translations into [0,1) before keying so that
+     composition closes correctly for screw/glide groups: a 2_1 screw
+     gives (C2Y)^2 = I with t=(0,1,0), which is the IDENTITY operation
+     (a pure lattice translation); without the wrap, SG_close saw it as
+     a "new" element and never terminated (hit the maxn cap). */
+  for(var k=0;k<3;k++){
+    var tv=t[k]-Math.floor(t[k]);
+    if(Math.abs(tv)<1e-4 || Math.abs(tv-1)<1e-4) tv=0;
+    s+=Math.round(tv*1e6)/1e6+',';
+  }
   return s;
 }
-function SG_close(gens,maxn){
+/* v2.2.15 (machine-written): centring-aware canonical key.  The coset key of a
+   translation modulo the CENTRING lattice, so I/F/R/A/B/C-centred generator sets
+   close as the true factor group G/T' - fixes d-glide doublings and centring
+   ambiguities of the older primitive-only closure.  P groups are unaffected. */
+var SG_CEN_SUBSETS={"P": [[0, 0, 0]], "A": [[0, 0, 0], [0, 0.5, 0.5]], "B": [[0, 0, 0], [0.5, 0, 0.5]], "C": [[0, 0, 0], [0.5, 0.5, 0]], "I": [[0, 0, 0], [0.5, 0.5, 0.5]], "F": [[0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]], "R": [[0, 0, 0], [0.6666666666666666, 0.3333333333333333, 0.3333333333333333], [0.3333333333333333, 0.6666666666666666, 0.6666666666666666]], "r": [[0, 0, 0]]};
+function SG_ckey(M,t,cen){
+  var c=SG_CEN_SUBSETS[cen], best=null;
+  for(var i=0;i<c.length;i++){
+    var k=SG_key(M,[t[0]-c[i][0], t[1]-c[i][1], t[2]-c[i][2]]);
+    if(best===null||k<best) best=k;
+  }
+  return best;
+}
+function SG_close(gens,maxn,cen){
   maxn=maxn||400;
   var I=[[1,0,0],[0,1,0],[0,0,1]];
   var seen={}, list=[];
@@ -908,7 +1040,7 @@ function SG_close(gens,maxn){
           var s=0; for(var c=0;c<3;c++) s+=A[r][c]*tb[c];
           tc[r]=s+ta[r];
         }
-        var k=SG_key(C,tc);
+        var k=SG_ckey(C,tc,cen);
         if(!seen[k]){
           seen[k]=1;
           var e={M:C,t:tc}; list.push(e); nxt.push(e);
@@ -923,6 +1055,278 @@ function SG_close(gens,maxn){
 
 /* point groups of the orthorhombic / tetragonal / cubic systems as explicit
    generator sets (all verified against their known orders) */
+/* SG-PASS step 3: translation-carrying generators */
+var SG_TGEN = {};
+SG_TGEN["P1"]=[["GX01", 0.0, 0.0, 0.0]];
+SG_TGEN["P-1"]=[["INV", 0.0, 0.0, 0.0], ["GX01", 0.0, 0.0, 0.0]];
+SG_TGEN["P2"]=[["C2Y", 0.0, 0.0, 0.0]];
+SG_TGEN["P21"]=[["C2Y", 0.0, 0.5, 0.0]];
+SG_TGEN["C2"]=[["C2Y", 0.0, 0.0, 0.0]];
+SG_TGEN["Pm"]=[["MY", 0.0, 0.0, 0.0]];
+SG_TGEN["Pc"]=[["MY", 0.0, 0.0, 0.5]];
+SG_TGEN["Cm"]=[["MY", 0.0, 0.0, 0.0]];
+SG_TGEN["Cc"]=[["MY", 0.0, 0.0, 0.5]];
+SG_TGEN["P2/m"]=[["INV", 0.0, 0.0, 0.0], ["C2Y", 0.0, 0.0, 0.0]];
+SG_TGEN["P21/m"]=[["INV", 0.0, 0.0, 0.0], ["C2Y", 0.0, 0.5, 0.0]];
+SG_TGEN["C2/m"]=[["INV", 0.0, 0.0, 0.0], ["C2Y", 0.0, 0.0, 0.0]];
+SG_TGEN["P2/c"]=[["INV", 0.0, 0.0, 0.0], ["C2Y", 0.0, 0.0, 0.5]];
+SG_TGEN["P21/c"]=[["INV", 0.0, 0.0, 0.0], ["C2Y", 0.0, 0.5, 0.5]];
+SG_TGEN["C2/c"]=[["INV", 0.0, 0.0, 0.0], ["C2Y", 0.0, 0.0, 0.5]];
+SG_TGEN["P222"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P2221"]=[["C2Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P21212"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["P212121"]=[["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["C2221"]=[["C2Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["C222"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["F222"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["I222"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["I212121"]=[["C2Z", 0.0, 0.5, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["Pmm2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Pmc21"]=[["C2Z", 0.0, 0.0, 0.5], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Pcc2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["Pma2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.0, 0.0]];
+SG_TGEN["Pca21"]=[["C2Z", 0.0, 0.0, 0.5], ["MX", 0.5, 0.0, 0.5]];
+SG_TGEN["Pnc2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.5, 0.5]];
+SG_TGEN["Pmn21"]=[["C2Z", 0.5, 0.0, 0.5], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Pba2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.0]];
+SG_TGEN["Pna21"]=[["C2Z", 0.0, 0.0, 0.5], ["MX", 0.5, 0.5, 0.5]];
+SG_TGEN["Pnn2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.5]];
+SG_TGEN["Cmm2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Cmc21"]=[["C2Z", 0.0, 0.0, 0.5], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Ccc2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["Amm2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Abm2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.5, 0.0]];
+SG_TGEN["Aem2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.5, 0.0]];
+SG_TGEN["Ama2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.0, 0.0]];
+SG_TGEN["Aba2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.0]];
+SG_TGEN["Aea2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.0]];
+SG_TGEN["Fmm2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Fdd2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.25, 0.25, 0.25]];
+SG_TGEN["Imm2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["Iba2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["Ima2"]=[["C2Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.0, 0.0]];
+SG_TGEN["Pmmm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Pnnn"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["Pccm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["Pban"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.0]];
+SG_TGEN["Pmma"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.0], ["C2X", 0.5, 0.0, 0.0]];
+SG_TGEN["Pnna"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.5, 0.5]];
+SG_TGEN["Pmna"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Pcca"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.0], ["C2X", 0.5, 0.0, 0.5]];
+SG_TGEN["Pbam"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["Pccn"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.5, 0.0], ["C2X", 0.5, 0.0, 0.5]];
+SG_TGEN["Pbcm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.5, 0.0]];
+SG_TGEN["Pnnm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.5]];
+SG_TGEN["Pmmn"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.0], ["INV", 0.5, 0.5, 0.0]];
+SG_TGEN["Pbcn"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.5, 0.5], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["Pbca"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["Pnma"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.5, 0.5]];
+SG_TGEN["Cmcm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Cmca"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Cmce"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Cmmm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Cccm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["Cmma"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Cmme"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Ccca"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.0, 0.5]];
+SG_TGEN["Ccce"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.0, 0.5]];
+SG_TGEN["Fmmm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Fddd"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.25, 0.25, 0.25]];
+SG_TGEN["Immm"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["Ibam"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["Ibca"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.5, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["Imma"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.5, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P4"]=[["C4Z", 0.0, 0.0, 0.0]];
+SG_TGEN["P41"]=[["C4Z", 0.0, 0.0, 0.25]];
+SG_TGEN["P42"]=[["C4Z", 0.0, 0.0, 0.5]];
+SG_TGEN["P43"]=[["C4Z", 0.0, 0.0, 0.75]];
+SG_TGEN["I4"]=[["C4Z", 0.0, 0.0, 0.0]];
+SG_TGEN["I41"]=[["C4Z", 0.0, 0.5, 0.25]];
+SG_TGEN["P-4"]=[["C2B", 0.0, 0.0, 0.0]];
+SG_TGEN["I-4"]=[["C2B", 0.0, 0.0, 0.0]];
+SG_TGEN["P4/m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0]];
+SG_TGEN["P42/m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.5]];
+SG_TGEN["P4/n"]=[["C4Z", 0.5, 0.5, 0.0], ["INV", 0.5, 0.5, 0.0]];
+SG_TGEN["P42/n"]=[["C4Z", 0.5, 0.5, 0.5], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["I4/m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0]];
+SG_TGEN["I41/a"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.75, 0.25, 0.25]];
+SG_TGEN["P422"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P4212"]=[["C4Z", 0.5, 0.5, 0.0], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["P4122"]=[["C4Z", 0.0, 0.0, 0.25], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["P41212"]=[["C4Z", 0.5, 0.5, 0.25], ["C2X", 0.5, 0.5, 0.75]];
+SG_TGEN["P4222"]=[["C4Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P42212"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.5, 0.5, 0.5]];
+SG_TGEN["P4322"]=[["C4Z", 0.0, 0.0, 0.75], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["P43212"]=[["C4Z", 0.5, 0.5, 0.75], ["C2X", 0.5, 0.5, 0.25]];
+SG_TGEN["I422"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["I4122"]=[["C4Z", 0.0, 0.5, 0.25], ["C2X", 0.0, 0.5, 0.25]];
+SG_TGEN["P4mm"]=[["C4Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["P4bm"]=[["C4Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.0]];
+SG_TGEN["P42cm"]=[["C4Z", 0.0, 0.0, 0.5], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["P42nm"]=[["C4Z", 0.5, 0.5, 0.5], ["MX", 0.5, 0.5, 0.5]];
+SG_TGEN["P4cc"]=[["C4Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["P4nc"]=[["C4Z", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.5]];
+SG_TGEN["P42mc"]=[["C4Z", 0.0, 0.0, 0.5], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["P42bc"]=[["C4Z", 0.0, 0.0, 0.5], ["MX", 0.5, 0.5, 0.0]];
+SG_TGEN["I4mm"]=[["C4Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["I4cm"]=[["C4Z", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["I41md"]=[["C4Z", 0.0, 0.5, 0.25], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["I41cd"]=[["C4Z", 0.0, 0.5, 0.25], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["P-42m"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P-42c"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["P-421m"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["P-421c"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.5]];
+SG_TGEN["P-4m2"]=[["C2B", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["P-4c2"]=[["C2B", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["P-4b2"]=[["C2B", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.0]];
+SG_TGEN["P-4n2"]=[["C2B", 0.0, 0.0, 0.0], ["MX", 0.5, 0.5, 0.5]];
+SG_TGEN["I-4m2"]=[["C2B", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.0]];
+SG_TGEN["I-4c2"]=[["C2B", 0.0, 0.0, 0.0], ["MX", 0.0, 0.0, 0.5]];
+SG_TGEN["I-42m"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["I-42d"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.5, 0.25]];
+SG_TGEN["P4/mmm"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P4/mcc"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["P4/nbm"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.0]];
+SG_TGEN["P4/nnc"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["P4/mbm"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["P4/mnc"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.5, 0.5, 0.5]];
+SG_TGEN["P4/nmm"]=[["C4Z", 0.5, 0.5, 0.0], ["C2X", 0.5, 0.5, 0.0], ["INV", 0.5, 0.5, 0.0]];
+SG_TGEN["P4/ncc"]=[["C4Z", 0.5, 0.5, 0.0], ["C2X", 0.5, 0.5, 0.5], ["INV", 0.5, 0.5, 0.0]];
+SG_TGEN["P42/mmc"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["P42/mcm"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.5], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["P42/nbc"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.0, 0.0, 0.5], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["P42/nnm"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["P42/mbc"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.5], ["C2X", 0.5, 0.5, 0.0]];
+SG_TGEN["P42/mnm"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.5, 0.5, 0.5]];
+SG_TGEN["P42/nmc"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.5, 0.5, 0.5], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["P42/ncm"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.5, 0.5, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["I4/mmm"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["I4/mcm"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["I41/amd"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.25, 0.75, 0.25], ["C2X", 0.0, 0.0, 0.0]];
+SG_TGEN["I41/acd"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.25, 0.75, 0.25], ["C2X", 0.0, 0.0, 0.5]];
+SG_TGEN["P3"]=[["C3H", 0.0, 0.0, 0.0]];
+SG_TGEN["P31"]=[["C3H", 0.0, 0.0, 0.3333333333333333]];
+SG_TGEN["P32"]=[["C3H", 0.0, 0.0, 0.6666666666666666]];
+SG_TGEN["R3"]=[["C3H", 0.0, 0.0, 0.0]];
+SG_TGEN["P-3"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0]];
+SG_TGEN["R-3"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0]];
+SG_TGEN["P312"]=[["C3H", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P321"]=[["C3H", 0.0, 0.0, 0.0], ["CD110", 0.0, 0.0, 0.0]];
+SG_TGEN["P3112"]=[["C3H", 0.0, 0.0, 0.33333333333333326], ["GX02", 0.0, 0.0, 0.6666666666666665]];
+SG_TGEN["P3121"]=[["C3H", 0.0, 0.0, 0.3333333333333333], ["CD110", 0.0, 0.0, 0.0]];
+SG_TGEN["P3212"]=[["C3H", 0.0, 0.0, 0.6666666666666665], ["GX02", 0.0, 0.0, 0.3333333333333335]];
+SG_TGEN["P3221"]=[["C3H", 0.0, 0.0, 0.6666666666666666], ["CD110", 0.0, 0.0, 0.0]];
+SG_TGEN["R32"]=[["C3H", 0.0, 0.0, 0.0], ["CD110", 0.0, 0.0, 0.0]];
+SG_TGEN["P3m1"]=[["C3H", 0.0, 0.0, 0.0], ["M110", 0.0, 0.0, 0.0]];
+SG_TGEN["P31m"]=[["C3H", 0.0, 0.0, 0.0], ["MABH", 0.0, 0.0, 0.0]];
+SG_TGEN["P3c1"]=[["C3H", 0.0, 0.0, 0.0], ["M110", 0.0, 0.0, 0.5]];
+SG_TGEN["P31c"]=[["C3H", 0.0, 0.0, 0.0], ["MABH", 0.0, 0.0, 0.5]];
+SG_TGEN["R3m"]=[["C3H", 0.0, 0.0, 0.0], ["M110", 0.0, 0.0, 0.0]];
+SG_TGEN["R3c"]=[["C3H", 0.0, 0.0, 0.0], ["M110", 0.0, 0.0, 0.5]];
+SG_TGEN["P-31m"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P-31c"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.5]];
+SG_TGEN["P-3m1"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0], ["CD110", 0.0, 0.0, 0.0]];
+SG_TGEN["P-3c1"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0], ["CD110", 0.0, 0.0, 0.5]];
+SG_TGEN["R-3m"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0], ["CD110", 0.0, 0.0, 0.0]];
+SG_TGEN["R-3c"]=[["INV", 0.0, 0.0, 0.0], ["C3H", 0.0, 0.0, 0.0], ["CD110", 0.0, 0.0, 0.5]];
+SG_TGEN["P6"]=[["C6H", 0.0, 0.0, 0.0]];
+SG_TGEN["P61"]=[["C6H", 0.0, 0.0, 0.16666666666666666]];
+SG_TGEN["P65"]=[["C6H", 0.0, 0.0, 0.8333333333333334]];
+SG_TGEN["P62"]=[["C6H", 0.0, 0.0, 0.3333333333333333]];
+SG_TGEN["P64"]=[["C6H", 0.0, 0.0, 0.6666666666666666]];
+SG_TGEN["P63"]=[["C6H", 0.0, 0.0, 0.5]];
+SG_TGEN["P-6"]=[["GX04", 0.0, 0.0, 0.0]];
+SG_TGEN["P6/m"]=[["INV", 0.0, 0.0, 0.0], ["C6H", 0.0, 0.0, 0.0]];
+SG_TGEN["P63/m"]=[["INV", 0.0, 0.0, 0.0], ["C6H", 0.0, 0.0, 0.5]];
+SG_TGEN["P622"]=[["C6H", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P6122"]=[["C6H", 0.0, 0.0, 0.16666666666666674], ["GX02", 0.0, 0.0, 0.8333333333333335]];
+SG_TGEN["P6522"]=[["C6H", 0.0, 0.0, 0.833333333333333], ["GX02", 0.0, 0.0, 0.16666666666666607]];
+SG_TGEN["P6222"]=[["C6H", 0.0, 0.0, 0.3333333333333335], ["GX02", 0.0, 0.0, 0.666666666666667]];
+SG_TGEN["P6422"]=[["C6H", 0.0, 0.0, 0.666666666666667], ["GX02", 0.0, 0.0, 0.3333333333333339]];
+SG_TGEN["P6322"]=[["C6H", 0.0, 0.0, 0.5], ["GX02", 0.0, 0.0, 0.5]];
+SG_TGEN["P6mm"]=[["C6H", 0.0, 0.0, 0.0], ["MABH", 0.0, 0.0, 0.0]];
+SG_TGEN["P6cc"]=[["C6H", 0.0, 0.0, 0.0], ["MABH", 0.0, 0.0, 0.5]];
+SG_TGEN["P63cm"]=[["C6H", 0.0, 0.0, 0.5], ["MABH", 0.0, 0.0, 0.0]];
+SG_TGEN["P63mc"]=[["C6H", 0.0, 0.0, 0.5], ["MABH", 0.0, 0.0, 0.5]];
+SG_TGEN["P-6m2"]=[["GX04", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P-6c2"]=[["GX04", 0.0, 0.0, 0.5], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P-62m"]=[["GX04", 0.0, 0.0, 0.0], ["MABH", 0.0, 0.0, 0.0]];
+SG_TGEN["P-62c"]=[["GX04", 0.0, 0.0, 0.5], ["MABH", 0.0, 0.0, 0.5]];
+SG_TGEN["P6/mmm"]=[["INV", 0.0, 0.0, 0.0], ["C6H", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P6/mcc"]=[["INV", 0.0, 0.0, 0.0], ["C6H", 0.0, 0.0, 0.0], ["GX02", 0.0, 0.0, 0.5]];
+SG_TGEN["P63/mcm"]=[["INV", 0.0, 0.0, 0.0], ["C6H", 0.0, 0.0, 0.5], ["GX02", 0.0, 0.0, 0.0]];
+SG_TGEN["P63/mmc"]=[["INV", 0.0, 0.0, 0.0], ["C6H", 0.0, 0.0, 0.5], ["GX02", 0.0, 0.0, 0.5]];
+SG_TGEN["P23"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["F23"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["I23"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P213"]=[["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.5, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["I213"]=[["C2Z", 0.0, 0.5, 0.0], ["C2X", 0.0, 0.0, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pm-3"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pn-3"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["Fm-3"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Fd-3"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.25, 0.25, 0.0], ["C2X", 0.0, 0.25, 0.25], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Im-3"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pa-3"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.5, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Ia-3"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.0, 0.5, 0.0], ["C2X", 0.0, 0.0, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P432"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P4232"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["F432"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["F4132"]=[["C4Z", 0.25, 0.25, 0.25], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["I432"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P4332"]=[["C4Z", 0.75, 0.25, 0.75], ["C2X", 0.5, 0.5, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P4132"]=[["C4Z", 0.25, 0.75, 0.25], ["C2X", 0.5, 0.5, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["I4132"]=[["C4Z", 0.25, 0.75, 0.25], ["C2X", 0.0, 0.0, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P-43m"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["F-43m"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["I-43m"]=[["C2B", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["P-43n"]=[["C2B", 0.5, 0.5, 0.5], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["F-43c"]=[["C2B", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["I-43d"]=[["C2B", 0.25, 0.75, 0.25], ["C2X", 0.0, 0.0, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pm-3m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pn-3n"]=[["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["Pm-3n"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pn-3m"]=[["C4Z", 0.5, 0.5, 0.5], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["INV", 0.5, 0.5, 0.5]];
+SG_TGEN["Fm-3m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Fm-3c"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Fd-3m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.25, 0.25], ["C2X", 0.0, 0.25, 0.25], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Fd-3c"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.25, 0.25], ["C2X", 0.0, 0.25, 0.25], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Im-3m"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Ia-3d"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.25, 0.75, 0.25], ["C2X", 0.0, 0.0, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["r3"]=[["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["r-3"]=[["INV", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["r32"]=[["C3C", 0.0, 0.0, 0.0], ["RX01", 0.0, 0.0, 0.0]];
+SG_TGEN["r3m"]=[["C3C", 0.0, 0.0, 0.0], ["MABH", 0.0, 0.0, 0.0]];
+SG_TGEN["r3c"]=[["C3C", 0.0, 0.0, 0.0], ["MABH", 0.5, 0.5, 0.5]];
+SG_TGEN["r-3m"]=[["INV", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["RX01", 0.0, 0.0, 0.0]];
+SG_TGEN["r-3c"]=[["INV", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["RX01", 0.5, 0.5, 0.5]];
+SG_TGEN["Pnnn:o2"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.5, 0.0], ["C2X", 0.0, 0.5, 0.5]];
+SG_TGEN["Pban:o2"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.5, 0.0], ["C2X", 0.0, 0.5, 0.0]];
+SG_TGEN["Pmmn:o2"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.5, 0.0], ["C2X", 0.5, 0.0, 0.0]];
+SG_TGEN["Ccce:o2"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.0, 0.0], ["C2X", 0.5, 0.0, 0.5]];
+SG_TGEN["Fddd:o2"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.25, 0.25, 0.0], ["C2X", 0.0, 0.25, 0.25]];
+SG_TGEN["P4/n:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0]];
+SG_TGEN["P42/n:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.5, 0.5]];
+SG_TGEN["I41/a:o1"]=[["C4Z", 0.0, 0.5, 0.25], ["INV", 0.0, 0.5, 0.25]];
+SG_TGEN["P4/nbm:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.5, 0.0]];
+SG_TGEN["P4/nnc:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.5, 0.5]];
+SG_TGEN["P4/nmm:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0], ["C2X", 0.5, 0.0, 0.0]];
+SG_TGEN["P4/ncc:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0], ["C2X", 0.5, 0.0, 0.5]];
+SG_TGEN["P42/nbc:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.5], ["C2X", 0.0, 0.5, 0.0]];
+SG_TGEN["P42/nnm:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.5], ["C2X", 0.0, 0.5, 0.5]];
+SG_TGEN["P42/nmc:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.0, 0.0]];
+SG_TGEN["P42/ncm:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.5], ["C2X", 0.5, 0.0, 0.5]];
+SG_TGEN["I41/amd:o1"]=[["C4Z", 0.0, 0.5, 0.25], ["C2X", 0.0, 0.5, 0.25], ["INV", 0.0, 0.5, 0.25]];
+SG_TGEN["I41/acd:o1"]=[["C4Z", 0.0, 0.5, 0.25], ["C2X", 0.5, 0.0, 0.25], ["INV", 0.0, 0.5, 0.25]];
+SG_TGEN["Pn-3:o2"]=[["INV", 0.0, 0.0, 0.0], ["C2Z", 0.5, 0.5, 0.0], ["C2X", 0.0, 0.5, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Fd-3:o1"]=[["C2Z", 0.0, 0.0, 0.0], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["INV", 0.25, 0.25, 0.25]];
+SG_TGEN["Pn-3n:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.5, 0.0, 0.0], ["C2X", 0.0, 0.5, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Pn-3m:o2"]=[["INV", 0.0, 0.0, 0.0], ["C4Z", 0.0, 0.5, 0.5], ["C2X", 0.0, 0.5, 0.5], ["C3C", 0.0, 0.0, 0.0]];
+SG_TGEN["Fd-3m:o1"]=[["C4Z", 0.25, 0.25, 0.25], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["INV", 0.25, 0.25, 0.25]];
+SG_TGEN["Fd-3c:o1"]=[["C4Z", 0.25, 0.25, 0.25], ["C2X", 0.0, 0.0, 0.0], ["C3C", 0.0, 0.0, 0.0], ["INV", 0.75, 0.25, 0.25]];
+
+
+
+
 var SG_PG = (function(){
   var I=[[1,0,0],[0,1,0],[0,0,1]];
   var INV=[[-1,0,0],[0,-1,0],[0,0,-1]];
@@ -936,6 +1340,17 @@ var SG_PG = (function(){
   var S4Z=[[0,-1,0],[1,0,0],[0,0,-1]];
   var D2_110=[[0,1,0],[1,0,0],[0,0,-1]];
   var C3=[[0,0,1],[1,0,0],[0,1,0]];
+  /* SG-PASS step 1: HEXAGONAL-AXES operators (fractional coords of the hex
+     cell, gamma=120deg).  C6: a->a+b, b->-a, i.e. C6(x,y)=(x-y,x).
+     C3=C6^2.  SVA fixes the a-axis line; SVD mirrors along the a+b
+     bisector.  C2A/C2D are the corresponding in-plane 2-folds.  These are
+     NOT the cubic C3 above - that distinction is the G8 gate.             */
+  var C6H=[[1,-1,0],[1,0,0],[0,0,1]];
+  var C3H=[[0,-1,0],[1,-1,0],[0,0,1]];
+  var SVA=[[1,-1,0],[0,-1,0],[0,0,1]];
+  var SVD=[[0,1,0],[1,0,0],[0,0,1]];
+  var C2A=[[1,-1,0],[0,-1,0],[0,0,-1]];
+  var C2D=[[0,1,0],[1,0,0],[0,0,-1]];
   var R={};
   R['1']    = [];
   R['-1']   = [INV];
@@ -957,6 +1372,33 @@ var SG_PG = (function(){
   R['432']  = [C3, C4Z];
   R['-43m'] = [C3, S4Z];
   R['m-3m'] = [C3, C4Z, INV];
+  /* SG-PASS step 1: trigonal + hexagonal point-group keys.
+     NOTE (G5 lesson): with ZERO translations, a- vs b-settings (312 vs 321,
+     3m1 vs 31m, -3m1 vs -31m, -6m2 vs -62m) generate the SAME abstract point
+     group - their operators are conjugate by the 3-fold; the distinction
+     becomes real only with generator translations (step 3).  Both spellings
+     are accepted and the key label is preserved for the UI.  Bare short
+     forms 32 / 3m / -3m are the R-lattice spellings (R 32, R 3m [via the
+     bare '3m' key - REFUSED for R by FIX-A], R -3m likewise).          */
+  R['3']     = [C3H];
+  R['-3']    = [C3H, INV];
+  R['312']   = [C3H, C2A];
+  R['321']   = [C3H, C2D];
+  R['32']    = [C3H, C2A];
+  R['3m1']   = [C3H, SVA];
+  R['31m']   = [C3H, SVD];
+  R['3m']    = [C3H, SVA];
+  R['-3m1']  = [C3H, INV, SVA];
+  R['-31m']  = [C3H, INV, SVD];
+  R['-3m']   = [C3H, INV, SVA];
+  R['6']     = [C6H];
+  R['-6']    = [C3H, MZ];
+  R['6/m']   = [C6H, MZ];
+  R['622']   = [C6H, C2A];
+  R['6mm']   = [C6H, SVA];
+  R['-6m2']  = [C3H, MZ, SVA];
+  R['-62m']  = [C3H, MZ, SVD];
+  R['6/mmm'] = [C6H, MZ, C2A];
   return R;
 })();
 
@@ -964,34 +1406,110 @@ var SG_PG = (function(){
 function SG_parseSymbol(sym){
   if(!sym || typeof sym!=='string') return null;
   var s=sym.replace(/['"]/g,'').trim();
+  /* SG-PASS step 2: settings suffixes.  ':H' is accepted and dropped (the
+     generator always uses hexagonal-axes conventions); ':R' is refused -
+     it implies a rhombohedral-cell description whose centring differs from
+     the obverse-hex translations in SG_CENTRING, and guessing would be
+     worse than the honest unsupported-symbol path.                          */
+  var sm=/[\s:](H|R)$/.exec(s);
+  /* v2.2.17: explicit origin-choice suffixes ':o1' / ':o2' for the 24
+     origin-twin groups; the unsuffixed symbol keeps the app-standard
+     setting.choice 2 is pinned standard for six double-origin groups
+     (I 41/a I 41/amd I 41/acd F d -3 F d -3m F d -3c), choice 1 for the
+     rest, matching spglib's first rows. */
+  var so=/[\s:]o([12])$/.exec(s);
+  if(so){
+    var base_o=s.substring(0, so.index).trim();
+    var mo=/^([PABCIFR])\s*(.+)$/.exec(base_o);
+    var pg_o=mo? mo[2].replace(/[\s_]/g,'') : null;
+    var fk_o=mo? mo[1]+pg_o : null;
+    var fk_o_s=fk_o? fk_o+':o'+so[1] : null;
+    if(mo && SG_TGEN[fk_o_s]!==undefined){
+      return {centring:mo[1], pointGroup:pg_o, fullKey:fk_o_s, settingSuffix:'o'+so[1]};
+    }
+    return null;
+  }
+  if(sm){
+    if(sm[1]==='R' || sm[1]==='r'){
+      /* v2.2.16: ':R' = rhombohedral-axes setting.  The seven trigonal R groups
+         route to the lowercase-r rhombohedral TGEN keys (fitted to spglib's
+         primitive '3*' settings); every other ':R' symbol refuses honestly. */
+      var base=s.substring(0, sm.index).trim();
+      var mR=/^([PABCIFR])\s*(.+)$/.exec(base);
+      var pgR=mR? mR[2].replace(/[\s_]/g,'') : null;
+      var fkeyR='r'+pgR;
+      if(mR && mR[1]==='R' && SG_TGEN[fkeyR]!==undefined){
+        return {centring:'r', pointGroup:pgR, fullKey:fkeyR, settingSuffix:'R'};
+      }
+      return null;
+    }
+    s=s.substring(0, sm.index).trim();
+  }
+  /* SG-PASS step 2: spaced full H-M for the MONOCLINIC reference setting,
+     e.g. 'P 1 2/m 1' (#10) or 'P 1 2 1' (#3): the 1s are unit-placeholders
+     around the unique-b content.  Only this exact token pattern is
+     simplified, so 'P 1 21 1' keeps its screw subscript and fails below
+     (gate G10).                                                           */
+  var toks=s.split(/\s+/);
+  if(toks.length===4 && /^[PABCIFR]$/.test(toks[0]) && toks[1]==='1' && toks[3]==='1'){
+    if(SG_CENTRING[toks[0]] && (SG_PG[toks[2]] || SG_TGEN[toks[0]+toks[2]]!==undefined)){ return {centring:toks[0], pointGroup:toks[2], fullKey:toks[0]+toks[2]}; }
+  }
   /* drop leading crystal-system qualifiers sometimes present */
   var m=/^([PABCIFR])\s*([0-9A-Za-z\/\-_ ]+)$/.exec(s);
   if(!m) return null;
   var cen=m[1];
   var pg=m[2].replace(/_/g,'').replace(/\s+/g,'');   /* '4/mmm', '-3m' etc */
   if(!SG_CENTRING[cen]) return null;
-  if(!SG_PG[pg]) return null;
-  return {centring:cen, pointGroup:pg};
+  /* SG-PASS step 3: accept if a symmorphic PG key OR TGEN entry exists */
+  var fk=cen+pg;
+  if(!SG_PG[pg] && SG_TGEN[fk]===undefined) return null;
+  return {centring:cen, pointGroup:pg, fullKey:fk};
 }
 
 /* Generate the operations for an H-M symbol. Returns
    {ok:true, ops:[{M:3x3, c:[3]}]}  or {ok:false, why:'...'} */
 function SG_generate(sym){
   var ps=SG_parseSymbol(sym);
-  if(!ps) return {ok:false, why:'symbol not recognised or not in the supported (ortho/tetragonal/cubic) set'};
-  var pg=SG_PG[ps.pointGroup];
+  if(!ps) return {ok:false, why:'symbol not recognised, or a non-symmorphic / non-reference setting (screws, glides, origin choice 2, rhombohedral axes) not yet supported'};
+  /* SG-PASS FIX-A: R-lattice mirror carriers (R 3m, R -3m, R 3c, R -3c) are
+     REFUSED.  In the true setting the mirrors sit on the CENTRING (displaced
+     by non-zero lattice fractions); composing the bare 3m/-3m point part with
+     R translations alone is NOT closed under composition (verified by gate
+     G4), so generating those ops would be WRONG, not merely incomplete.
+     Succeed honestly at failing.  Closing R carriers (R 3, R -3, R 32) are
+     unaffected.                                                            */
+  
+  /* SG-PASS step 3: use TGEN translation-carrying generators when present. */
+  var _mats={"MX": [[-1, 0, 0], [0, 1, 0], [0, 0, 1]], "MY": [[1, 0, 0], [0, -1, 0], [0, 0, 1]], "MZ": [[1, 0, 0], [0, 1, 0], [0, 0, -1]], "C2X": [[1, 0, 0], [0, -1, 0], [0, 0, -1]], "C2Y": [[-1, 0, 0], [0, 1, 0], [0, 0, -1]], "C2Z": [[-1, 0, 0], [0, -1, 0], [0, 0, 1]], "INV": [[-1, 0, 0], [0, -1, 0], [0, 0, -1]], "C6H": [[1, -1, 0], [1, 0, 0], [0, 0, 1]], "C3H": [[0, -1, 0], [1, -1, 0], [0, 0, 1]], "MXH": [[1, -1, 0], [0, -1, 0], [0, 0, 1]], "MYH": [[-1, 0, 0], [-1, 1, 0], [0, 0, 1]], "MABH": [[0, 1, 0], [1, 0, 0], [0, 0, 1]], "C2A": [[1, -1, 0], [0, -1, 0], [0, 0, -1]], "C2B": [[0, 1, 0], [-1, 0, 0], [0, 0, -1]], "C4Z": [[0, -1, 0], [1, 0, 0], [0, 0, 1]], "S4Z": [[0, -1, 0], [1, 0, 0], [0, 0, -1]], "C3C": [[0, 0, 1], [1, 0, 0], [0, 1, 0]], "CD110": [[0, 1, 0], [1, 0, 0], [0, 0, -1]], "RX01": [[0, -1, 0], [-1, 0, 0], [0, 0, -1]]};  /* hardcoded: matrix constants live inside the SG_PG closure */
+  /* v2.2.15 (machine-written): additional generator matrices from the ITA-exact fits. */
+  var __SG5X={"GX01": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "GX02": [[0, -1, 0], [-1, 0, 0], [0, 0, -1]], "GX04": [[-1, 1, 0], [-1, 0, 0], [0, 0, -1]], "M110": [[0, -1, 0], [-1, 0, 0], [0, 0, 1]]};
+  for(var __k in __SG5X){ _mats[__k]=__SG5X[__k]; }
   var gens=[];
-  for(var i=0;i<pg.length;i++) gens.push({M:pg[i], t:[0,0,0]});
-  var P=SG_close(gens, 64);
+  var tg=SG_TGEN[ps.fullKey];
+  if(tg){
+    for(var i=0;i<tg.length;i++){
+      var _m=_mats[tg[i][0]];
+      if(!_m) return {ok:false, why:'SG_TGEN: unknown matrix in table'};
+      gens.push({M:_m, t:[tg[i][1],tg[i][2],tg[i][3]]});
+    }
+  } else {
+    var pg=SG_PG[ps.pointGroup];
+    for(var j=0;j<pg.length;j++) gens.push({M:pg[j], t:[0,0,0]});
+  }
+  var P=SG_close(gens, 64, ps.centring);
   if(!P) return {ok:false, why:'point group did not close'};
   var cent=SG_CENTRING[ps.centring];
-  var ops=[];
+  /* v2.2.15 (machine-written): compose centring cosets, then dedupe on exact (M,t)
+     keys so centring-doubled representations cannot leak into the op list. */
+  var seen={}, ops=[];
   for(var c=0;c<cent.length;c++){
     for(var p=0;p<P.length;p++){
-      ops.push({M:P[p].M, c:[cent[c][0]+P[p].t[0], cent[c][1]+P[p].t[1], cent[c][2]+P[p].t[2]]});
+      var cc=[cent[c][0]+P[p].t[0], cent[c][1]+P[p].t[1], cent[c][2]+P[p].t[2]];
+      var kk=SG_key(P[p].M,cc);
+      if(!seen[kk]){ seen[kk]=1; ops.push({M:P[p].M, c:cc}); }
     }
   }
-  return {ok:true, ops:ops, centring:ps.centring, pointGroup:ps.pointGroup,
+return {ok:true, ops:ops, centring:ps.centring, pointGroup:ps.pointGroup,
           pointGroupOrder:P.length, centringOrder:cent.length, order:ops.length};
 }
 
@@ -1036,10 +1554,42 @@ function parseCIF(text, fname){
   var L=cifLattice(a,b,c,al,be,ga);
   if(!L) throw new Error('CIF: cell angles/lengths do not define a valid lattice.');
   var hm=tags['_space_group_name_H-M_alt']||tags['_symmetry_space_group_name_H-M']||tags['_space_group_name_H-M']||tags['_symmetry_space_group_name_H-M'];
+  /* v2.2.15 (SG5): unquoted multi-token H-M symbols ("F d -3 m") are split into
+     separate value tokens by cifParse; join the tokens that follow the symbol
+     tag on the same logical tag-line so the rescue path can see the full
+     symbol.  Quoted symbols are untouched (single token already). */
+  if(hm){
+    for(var qf=0;qf<loops.length;qf++){
+      if(loops[qf].tags.indexOf('_symmetry_space_group_name_H-M')>=0
+         || loops[qf].tags.indexOf('_space_group_name_H-M')>=0
+         || loops[qf].tags.indexOf('_symmetry_space_group_name_H-M_alt')>=0
+         || loops[qf].tags.indexOf('_space_group_name_H-M_alt')>=0){
+        break;
+      }
+    }
+    var symTagNames=['_symmetry_space_group_name_H-M','_space_group_name_H-M','_symmetry_space_group_name_H-M_alt','_space_group_name_H-M_alt'];
+    for(var qt=0;qt<symTagNames.length;qt++){
+      var tg=symTagNames[qt];
+      for(var idx=0;idx<toks.length;idx++){
+        if(toks[idx].t==='tag' && toks[idx].v===tg){
+          var j=idx+1, parts=[];
+          while(j<toks.length && toks[j].t==='value'){ parts.push(toks[j].v); j++; }
+          if(parts.length>1){
+            hm=parts.join(' ');
+            idx=j-1;
+          }
+          break;
+        }
+      }
+      if(parts && parts.length>1){ break; }
+        }
+  }
+
   if(hm) notes.push('CIF space group: '+hm+'.');
 
   /* -- symmetry operations -- */
   var ops=[];
+  var opsDeclared=false, opsAssumed=false;   /* J2 provenance (set below; see return) */
   for(var q=0;q<loops.length;q++){
     var lt=loops[q].tags;
     var ci=-1;
@@ -1056,6 +1606,7 @@ function parseCIF(text, fname){
       }
     }
   }
+  if(ops.length>0){ opsDeclared=true; }   /* J2: an explicit symop loop was present */
   /* ---- symmetry-operation completeness -----------------------------------
      Many published CIFs give only the space-group SYMBOL and no operation
      list (or a truncated list).  If we recognise the symbol and it belongs to
@@ -1082,6 +1633,7 @@ function parseCIF(text, fname){
         var had=ops.length;
         ops=conv;
         sgUsed=true;
+        opsDeclared=true;   /* J2: full set generated from a recognised symbol */
         notes.push('Symmetry: the CIF supplied '+had+' operation'+(had===1?'':'s')
                    +' but the space group '+sgSym+' needs '+conv.length
                    +'; generated the full set from the symbol.');
@@ -1089,11 +1641,13 @@ function parseCIF(text, fname){
     } else if(ops.length===0){
       notes.push('No symmetry operations in the CIF and the space-group symbol "'
                  +sgSym+'" is not in the supported set; assumed P1.');
+      opsAssumed=true;   /* J2: symbol given but unusable -> assumption */
     }
   }
   if(ops.length===0){
     ops=[SYM_IDENT];
     notes.push('No symmetry operations in the CIF; assumed P1.');
+    opsAssumed=true;   /* J2: no ops anywhere -> the C1 below is an assumption */
   }
 
   /* -- atom-site loop -- */
@@ -1147,8 +1701,12 @@ function parseCIF(text, fname){
     if(!seen[k]){ seen[k]=1; species.push({sym:k,mass:null}); }
   }
   return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
-          symops:ops};   /* keep the operations so the 2D panel can derive the
-                            site-symmetry group of the anchored atom */
+          /* keep the operations so the 2D panel can derive the
+             site-symmetry group of the anchored atom.  J2 PROVENANCE: these
+             flags distinguish DECLARED symmetry (explicit loop, or generated
+             from a recognised space-group symbol) from an ASSUMED P1. */
+          symops:ops,
+          symopsAssumed:opsAssumed, symopsDeclared:opsDeclared};
 }
 
 /* ---- Materials Project / pymatgen-style JSON ---- */
@@ -1199,8 +1757,10 @@ function parseMPJSON(text, fname){
   }
   var nm=(obj&&obj.formula_pretty)?obj.formula_pretty:(fname||'JSON structure');
   notes.push('Loaded from JSON structure ('+nm+').');
+  notes.push('JSON structure carries no symmetry operations; site-group analysis assumes P1 - irrep / symmetry-adapted orbital results are not meaningful.');
   return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
-          symops:null};
+          symops:null,
+          symopsAssumed:true, symopsDeclared:false};   /* J2: MP JSON decks carry no symmetry - P1 assumed */
 }
 /* element for an MP-style site: species is {'El(+n)': occ} or [{element|Element}] or label */
 function mpSiteElement(site){
@@ -1374,7 +1934,9 @@ function parseQE(text){
   }
 
   if(nat!==null && atoms.length!==nat) notes.push('Parsed '+atoms.length+' atoms but the namelist declares nat='+nat+'.');
-  return {cell:cell, species:species, atoms:atoms, notes:notes, nat:nat, symops:null};
+  notes.push('pw.x deck carries no symmetry operations; site-group analysis assumes P1 - irrep / symmetry-adapted orbital results are not meaningful.');
+  return {cell:cell, species:species, atoms:atoms, notes:notes, nat:nat, symops:null,
+          symopsAssumed:true, symopsDeclared:false};   /* J2: pw.x decks carry no symmetry - P1 assumed */
 }
 
 /* Default of the "Atom size" slider (S.scale).  Kept as a named constant so
@@ -1404,6 +1966,13 @@ var S={ struct:null, name:'', nx:1, ny:1, nz:1,
 
 /* ---------------- WebGL setup ---------------- */
 var gl=null, glc=null, ovc=null, octx=null;
+/* WebGL context loss.  The browser can reclaim the GPU context at any time
+   (mobile backgrounding, driver reset, too many contexts).  Without handling
+   it the render loop keeps issuing commands against a dead context and the
+   viewer silently freezes.  glLost suppresses GL work until restore; the
+   context is fully rebuilt on webglcontextrestored (all programs/buffers are
+   recreated by glInit, so a full re-init is the correct recovery). */
+var glLost=false;
 var GL_IDX32=false;   /* 32-bit GL element indices available? (OES_element_index_uint, requested in initUI) */
 var progS=null, progL=null, progF=null, progH=null, progO=null, progC=null, locS={}, locL={}, locF={}, locH={}, locO={}, locC={}, Pm=new Float32Array(16), Vm=new Float32Array(16), VPm=new Float32Array(16);
 var M=new Float32Array(16), R9=new Float32Array(9);
@@ -1491,6 +2060,29 @@ var bondBatch=null;   /* { p:nor, c:col, i:idx, n:indexCount, ver:.., r:.. } */
    whose radial profile follows |Y_lm|, generated per (l,m) on demand and
    cached.  Vertices are unit-scaled; the caller scales by the atomic radius. */
 var meshOrbCache={};
+/* Bounded LRU for lobe meshes.  The key for a SALC mesh embeds the rounded
+   coefficient vector (makeSALCLobeMesh), so cycling anchors/planes/modes
+   through a long session minted one GPU mesh per distinct coefficient set
+   and never released them (the cache was only cleared on structure load).
+   Each entry owns up to two uploaded patches (pos/nor/idx buffers) plus a
+   110x140 source grid, so an unbounded cache is a real GPU+CPU leak.
+   Eviction drops the JS references; the GL buffers are released by the
+   context's own GC of the deleted-eligible objects (no deleteBuffer needed
+   here - they are small and few).  The two seeded (l,m) meshes rebuild
+   cheaply on demand, so a miss costs one tessellation, not correctness. */
+var _meshOrbKeys=[], MESHORB_CACHE_MAX=48;
+function _meshOrbSet(k,v){
+  var i=_meshOrbKeys.indexOf(k);
+  if(i>=0) _meshOrbKeys.splice(i,1);
+  _meshOrbKeys.push(k);
+  meshOrbCache[k]=v;
+  while(_meshOrbKeys.length>MESHORB_CACHE_MAX){
+    var evk=_meshOrbKeys.shift();
+    if(evk!==k) delete meshOrbCache[evk];
+  }
+  return v;
+}
+function meshOrbClear(){ meshOrbCache={}; _meshOrbKeys=[]; }
 /* Build ONE smooth lobe patch per sign region of |Y_lm|.
    Splitting at the nodes means no triangle ever spans a node, so there is
    no fold in the surface and the shading is continuous (this is what makes
@@ -1635,8 +2227,7 @@ function makeLobeMesh(l,m,angFn,keySuffix){
     out.push(up);
   }
   var res={ patches: out, count: out.length };
-  meshOrbCache[key]=res;
-  return res;
+  return _meshOrbSet(key, res);
 }
 
 var boxBufHome=null, boxBufSc=null;
@@ -1709,6 +2300,14 @@ function rebuildScene(){
         home: (ix===0&&iy===0&&iz===0)
       });
     }
+  }
+  /* L2b: stamp the SCENE atoms (3D path) with their site class (same cell
+     index mapping; the replication fills atoms in supercell order). */
+  var _nCell2=(S.struct && S.struct.atoms)? S.struct.atoms.length : 0;
+  var _cp=(_nCell2)? classPartition(S.struct) : null;
+  var _cmap=(_cp? _cp.map : null);
+  for(var aL=0;aL<atoms.length;aL++){
+    if(_cmap) atoms[aL].cls=_cmap[aL % _nCell2].cls;
   }
   S.atoms=atoms;
 
@@ -1866,6 +2465,269 @@ var _netBasisCache={ver:-1, cell:null, u:null, v:null, n:null, res:null};
 /* Memoised planeBBox() result: depends only on (PLANE.pts, version) now that
    the fit box no longer varies with the "net" checkbox.                       */
 var _planeBBoxCache={ver:-1, res:null};
+/* ==== L1: SITE-CLASS PARTITION =============================================
+   Atoms of one ELEMENT can sit at several inequivalent sites (different
+   Wyckoff classes), and the SALC chips describe ONE site class only - the
+   anchored atom's.  classPartition() groups the CELL atoms into orbits under
+   the structure's DECLARED operations, using the same wrapped-fractional
+   equality as PG_siteGroupOps: two atoms share a class iff some listed
+   operation (rotation + fractional shift) maps one to the other modulo 1.
+   Orbits never cross elements.  For structures with NO declared ops
+   (assumed P1) every distinct fractional position is its own seed - harmless,
+   since the SALC machinery never engages there (symopsAssumed annotation).
+   Memo: keyed on (structure revision | ops hash); a new load or an edit of
+   the symmetry list re-partitions automatically.  map[i] = {seed, cls}
+   with cls a per-ELEMENT ordinal like 'O#1'. */
+var _classPartitionCache={key:null, res:null};
+function classPartition(st){
+  if(!st || !st.atoms || !st.atoms.length) return null;
+  var key=String(st.rev||0)+'|'+symOpsHash(st.symops||[]);
+  if(_classPartitionCache.key===key && _classPartitionCache.res) return _classPartitionCache.res;
+  var ops=st.symops||[];
+  var pos=st.atoms.map(function(a){ return a.f; });
+  var n=pos.length;
+  var seedOf=new Array(n); for(var q=0;q<n;q++) seedOf[q]=-1;
+  var seeds=[];
+  for(var i=0;i<n;i++){
+    if(seedOf[i]>=0) continue;
+    var sid=seeds.length;
+    seedOf[i]=sid; seeds.push(i);
+    var queue=[i];
+    while(queue.length){
+      var cur=queue.shift();
+      for(var oi=0;oi<ops.length;oi++){
+        var M=ops[oi].M, c=ops[oi].c||[0,0,0];
+        var im=[c[0]+M[0][0]*pos[cur][0]+M[0][1]*pos[cur][1]+M[0][2]*pos[cur][2],
+                c[1]+M[1][0]*pos[cur][0]+M[1][1]*pos[cur][1]+M[1][2]*pos[cur][2],
+                c[2]+M[2][0]*pos[cur][0]+M[2][1]*pos[cur][1]+M[2][2]*pos[cur][2]];
+        for(var j=0;j<n;j++){
+          if(seedOf[j]>=0) continue;
+          if(st.atoms[j].sym!==st.atoms[i].sym) continue;
+          var df=[im[0]-pos[j][0], im[1]-pos[j][1], im[2]-pos[j][2]];
+          var ok=true;
+          for(var r=0;r<3;r++){
+            var d=df[r]-Math.round(df[r]);
+            if(Math.abs(d)>FRAC_TOL){ ok=false; break; }
+          }
+          if(ok){ seedOf[j]=sid; queue.push(j); }
+        }
+      }
+    }
+  }
+  var seen={}, map=[];
+  for(var k2=0;k2<n;k2++){
+    var sid2=seedOf[k2];
+    if(seen[sid2]===undefined){
+      var el=st.atoms[seeds[sid2]].sym;
+      var cnt=(seen['#'+el]||0)+1;
+      seen['#'+el]=cnt;
+      seen[sid2]=cnt;
+    }
+    map.push({seed:seeds[sid2], cls:st.atoms[seeds[sid2]].sym+'#'+seen[sid2]});
+  }
+  var res={map:map, nClasses:seeds.length, key:key};
+  _classPartitionCache={key:key, res:res};
+  return res;
+}
+/* ==== M1 (Phase 3): ORBIT RELATIONS + ORIENTED SALC COEFFICIENTS ==========
+   Phase 2 (L2c/L2d) restricted the SALC glyphs to the anchor's site class,
+   but inside one class, members related by a POINT OPERATION g (not a pure
+   translation) still each carry the same copied glyph.  Physically, the
+   correct picture transports the SALC by g:  the member at g(anchor) shows
+   D_l(R_g) applied to the coefficient vector (self-consistent orientation
+   + phase), where R_g is the cartesian rotation of g.  For a 1-D SALC this
+   reduces to c or -c when the vector is an eigenvector of D(R_g); for
+   degenerate SALCs we transport the whole vector (the honest general
+   case).  OPERATION AMBIGUITY: several listed ops may map anchor->member;
+   we use the FIRST listed (deterministic, CIF order) - attendant SIGN is
+   gauge-fixed by that choice.  Translation images (+n lattice vectors)
+   keep the identity rotation and +1 sign (the Pass-2 slab-at-Gamma
+   convention: phase factors e^{ik.T} are all 1 at k=Gamma).
+   Memo: per (structure rev | anchor fraction | atom), tiny map.           */
+var _orbitRelCache={};
+/* Bounded LRU.  Keyed per (rev | target frac | anchor cart); normally cleared
+   on anchor/plane/structure change, but a very large replicated slice asks
+   about every atom of the orbit and the map grows with slice size.  Values
+   may legitimately be null (no relation), so recency is tracked by an
+   explicit key list, never by truthiness.  Entries are tiny; the cap is
+   generous and a miss just re-walks the op list. */
+var _orbitRelKeys=[], ORBITREL_CACHE_MAX=4096;
+function _orbitRelSet(k,v){
+  var i=_orbitRelKeys.indexOf(k);
+  if(i>=0) _orbitRelKeys.splice(i,1);
+  _orbitRelKeys.push(k);
+  _orbitRelCache[k]=v;
+  while(_orbitRelKeys.length>ORBITREL_CACHE_MAX){
+    var evk=_orbitRelKeys.shift();
+    if(evk!==k) delete _orbitRelCache[evk];
+  }
+  return v;
+}
+function _orbitRelClear(){ _orbitRelCache={}; _orbitRelKeys=[]; }
+function _orbitRelKey(st,anch,fj){
+  return (st.rev||0)+'|'+Math.round(fj[0]*1e4)+','+Math.round(fj[1]*1e4)+','+Math.round(fj[2]*1e4)
+         +'|'+(anch? Math.round(anch.cart[0]*1e4)+','+Math.round(anch.cart[1]*1e4)+','+Math.round(anch.cart[2]*1e4) : 'na');
+}
+function orbitRelationOf(st, anch, fj){
+  if(!st || !st.symops || !st.symops.length || !anch) return null;
+  var key=_orbitRelKey(st,anch,fj);
+  if(Object.prototype.hasOwnProperty.call(_orbitRelCache,key)) return _orbitRelCache[key];
+  var G=cellInvRows(st.cell);
+  if(!G){ return _orbitRelSet(key,null); }
+  var fa=[G[0][0]*anch.cart[0]+G[0][1]*anch.cart[1]+G[0][2]*anch.cart[2],
+          G[1][0]*anch.cart[0]+G[1][1]*anch.cart[1]+G[1][2]*anch.cart[2],
+          G[2][0]*anch.cart[0]+G[2][1]*anch.cart[1]+G[2][2]*anch.cart[2]];
+  var A=st.cell;
+  var Ac=[[A[0][0],A[1][0],A[2][0]],[A[0][1],A[1][1],A[2][1]],[A[0][2],A[1][2],A[2][2]]];
+  var Ai=PG_inv3(Ac);
+  if(!Ai){ return _orbitRelSet(key,null); }
+  /* CX8-1: PERIODIC SELF-IMAGE SHORT-CIRCUIT.  When the target site
+     IS the reference site modulo the lattice (the anchor itself, or
+     any periodic image of the seed), the relation is the IDENTITY
+     - the SALC repeats unchanged.  Without this, the t=0 self case
+     fell through M1-FIX2's exclusion into pass 2, which selects the
+     FIRST full-crystal op mapping the site onto itself PLUS a
+     lattice shift - an op generally NOT in the slab-restricted
+     site subgroup, so D_l(R) does not preserve the SALC vector and
+     the anchor drew a different lobe pattern from every translation
+     image (user report: NaCl (101) B2g vs B3g one-atom flips).
+     Self-images draw the seed vector, full stop. */
+  var dfS=[fj[0]-fa[0], fj[1]-fa[1], fj[2]-fa[2]];
+  if(Math.abs(dfS[0]-Math.round(dfS[0]))<FRAC_TOL &&
+     Math.abs(dfS[1]-Math.round(dfS[1]))<FRAC_TOL &&
+     Math.abs(dfS[2]-Math.round(dfS[2]))<FRAC_TOL){
+    var resS={R:[[1,0,0],[0,1,0],[0,0,1]],
+               t:[Math.round(dfS[0]),Math.round(dfS[1]),Math.round(dfS[2])],
+               opIndex:0};
+    return _orbitRelSet(key,resS);
+  }
+  /* M1-FIX: TWO PASSES.  Pass 1 keeps only PURE TRANSLATIONS (identity
+     rotation, any lattice shift) - if any listed op reaches the site as a
+     pure translation, that relation WINS (Pass-2 slab-at-Gamma convention:
+     translation images must carry exactly the anchor's vector and sign).
+     Pass 2, only when no pure translation relates the sites, takes the
+     FIRST point operation that does (deterministic; CIF order).  This
+     fixes the battery case where a mirror image + lattice shift was
+     picked for a plain translation image and spuriously flipped the
+     y-odd SALC. */
+  var res=null;
+  for(var pass=1; pass<=2 && !res; pass++){
+    for(var i=0;i<st.symops.length && !res;i++){
+      var M=st.symops[i].M, c=st.symops[i].c||[0,0,0];
+      var im=[c[0]+M[0][0]*fa[0]+M[0][1]*fa[1]+M[0][2]*fa[2],
+              c[1]+M[1][0]*fa[0]+M[1][1]*fa[1]+M[1][2]*fa[2],
+              c[2]+M[2][0]*fa[0]+M[2][1]*fa[1]+M[2][2]*fa[2]];
+      var df=[im[0]-fj[0], im[1]-fj[1], im[2]-fj[2]];
+      var t=[Math.round(df[0]),Math.round(df[1]),Math.round(df[2])];
+      var ok=true;
+      for(var r=0;r<3;r++){ var d=df[r]-t[r]; if(Math.abs(d)>FRAC_TOL){ok=false;break;} }
+      if(!ok) continue;
+      /* Q1 (centring fix): an operation with the IDENTITY rotation matrix is a
+       LATTICE TRANSLATION regardless of its fractional shift - F-centring ops
+       like x,y+1/2,z+1/2 are translations of the F lattice.  The old test
+       also required c=0, so centring images were never recognised as
+       translation-related and fell back to the anchor vector (drawn right
+       only because every centring image IS translation-related). */
+    var isT=(PG_key(PG_roundM(M))===PG_key(PG_eye()));
+      if(pass===1){
+        if(!isT) continue;                       /* pass 1: pure translations only */
+        if(i===0 && !(t[0]||t[1]||t[2])) continue;  /* the identity op itself is the ANCHOR, not a relation */
+        res={R:[[1,0,0],[0,1,0],[0,0,1]], t:t, opIndex:i};
+      } else {
+        if(isT && (t[0]||t[1]||t[2])) continue;  /* non-identity translation already handled in pass 1 */
+        if(isT && !(t[0]||t[1]||t[2]) && i===0) continue;  /* anchor itself */
+        /* M1-FIX2: the ANCHOR SITE ITSELF (t=0 under a point op) is not a
+           "related member" - it draws the anchor's own vector.  Without this
+           guard the finder matched e.g. m_y (which FIXES the anchor site)
+           and spuriously flipped the y-odd SALC at the anchor. */
+        if(!(t[0]||t[1]||t[2])) continue;
+        var R=PG_mm(PG_mm(Ac,M),Ai);
+        /* CX11-3: SLAB/SURFACE-COMPATIBLE OPS ONLY.  The drawn SALC
+           is an irrep of the PLANE-ADAPTED site group, so an op that
+           does not preserve (slab) or keep the half-space (surface)
+           has NO defined action on it - transporting through such an
+           op is gauge noise (diamond t02 thick slab: a cross-layer
+           C3 body-diagonal rotated one atom's A1 glyph 120 deg while
+           every translation copy drew the seed vector).  Restrict
+           pass 2 to ops compatible with the plane; atoms reachable
+           only through incompatible ops fall through to the periodic
+           repeat (identical glyph).  Full mode keeps every op - its
+           site group IS the full group. */
+        if(typeof PLANE!=='undefined' && PLANE && PLANE.on && PLANE.n &&
+           typeof S!=='undefined' && S.symMode && S.symMode!=='full'){
+          var _nn=Math.sqrt(PLANE.n[0]*PLANE.n[0]+PLANE.n[1]*PLANE.n[1]+PLANE.n[2]*PLANE.n[2]);
+          var _mn=[R[0][0]*PLANE.n[0]+R[0][1]*PLANE.n[1]+R[0][2]*PLANE.n[2],
+                   R[1][0]*PLANE.n[0]+R[1][1]*PLANE.n[1]+R[1][2]*PLANE.n[2],
+                   R[2][0]*PLANE.n[0]+R[2][1]*PLANE.n[1]+R[2][2]*PLANE.n[2]];
+          var _cos=(_mn[0]*PLANE.n[0]+_mn[1]*PLANE.n[1]+_mn[2]*PLANE.n[2])/(_nn*_nn);
+          if(S.symMode==='surface'){ if(_cos<1-1e-6) continue; }
+          else { if(Math.abs(_cos)<1-1e-6) continue; }
+        }
+        res={R:R, t:t, opIndex:i};
+      }
+    }
+  }
+  return _orbitRelSet(key,res);
+}
+/* M1b: transport a CELL-frame SALC coefficient vector by the relation's
+   rotation:  v_j = D_l(R) v_anchor  (PG_repMatrix is the l-shell rep). */
+function transportSALCCoefs(coefs, l, R){
+  if(!R) return coefs;
+  var D=PG_repMatrix(l, R);
+  var n=coefs.length, out=new Array(n);
+  for(var r=0;r<n;r++){
+    var s=0;
+    for(var m=0;m<n;m++) s+=D[r][m]*coefs[m];
+    out[r]=s;
+  }
+  return out;
+}
+/* M1c: PER-ATOM oriented coefficients for drawing.  Returns
+   {coefs, sign, rel} or null (caller falls back to the Phase-2 rule). */
+function orientedSALCFor(station, anch, hotCoefs, l, st, atCart){
+  if(!st || !anch || !hotCoefs) return null;
+  var G=cellInvRows(st.cell);
+  if(!G) return null;
+  var fj=[G[0][0]*atCart[0]+G[0][1]*atCart[1]+G[0][2]*atCart[2],
+          G[1][0]*atCart[0]+G[1][1]*atCart[1]+G[1][2]*atCart[2],
+          G[2][0]*atCart[0]+G[2][1]*atCart[1]+G[2][2]*atCart[2]];
+  var rel=orbitRelationOf(st, anch, fj);
+  if(!rel) return null;
+  var coefs=hotCoefs;
+  if(rel.R && !(rel.t[0]===0&&rel.t[1]===0&&rel.t[2]===0 && rel.opIndex===0)){
+    coefs=transportSALCCoefs(hotCoefs, l, rel.R);
+  }
+  var sgn=1, bd=-1;
+  for(var r=0;r<coefs.length;r++){
+    var dp=coefs[r]*hotCoefs[r];
+    if(Math.abs(dp)>bd){ bd=Math.abs(dp); sgn=(dp>0?1:-1); }
+  }
+  return {coefs:coefs, sign:sgn, rel:rel};
+}
+
+/* L1b: anchor's class label from its cartesian position (element must match). */
+function anchorClassId(st, anch){
+  if(!st || !anch) return null;
+  var part=classPartition(st);
+  if(!part) return null;
+  var G=cellInvRows(st.cell);
+  if(!G) return null;
+  var f=[G[0][0]*anch.cart[0]+G[0][1]*anch.cart[1]+G[0][2]*anch.cart[2],
+         G[1][0]*anch.cart[0]+G[1][1]*anch.cart[1]+G[1][2]*anch.cart[2],
+         G[2][0]*anch.cart[0]+G[2][1]*anch.cart[1]+G[2][2]*anch.cart[2]];
+  for(var i=0;i<st.atoms.length;i++){
+    if(st.atoms[i].sym!==anch.sym) continue;
+    var df=[f[0]-st.atoms[i].f[0], f[1]-st.atoms[i].f[1], f[2]-st.atoms[i].f[2]];
+    var ok=true;
+    for(var r2=0;r2<3;r2++){
+      var d2=df[r2]-Math.round(df[r2]);
+      if(Math.abs(d2)>2e-4){ ok=false; break; }
+    }
+    if(ok) return part.map[i].cls;
+  }
+  return null;
+}
+
 /* R3: slab-candidate memo.  The replication loop in buildSlice re-tiled the
    whole supercell (thousands of per-replica coordinate arrays) on EVERY call,
    including every coalesced frame of a thickness-drag; but the candidate set
@@ -2192,10 +3054,16 @@ function buildSlice(){
   var u0v=PLANE.u[0], u1v=PLANE.u[1], u2v=PLANE.u[2];
   var v0v=PLANE.v[0], v1v=PLANE.v[1], v2v=PLANE.v[2];
   var thr=half+1e-9;
+  /* L2a: stamp each drawn slice atom with its SITE CLASS (cell index =
+     r3 % nCellAtoms - the candidate table runs the replicated supercell
+     in cell order). */
+  var _nCell=st.atoms.length;
+  var _clsMap=(function(){ var cp=classPartition(st); return cp? cp.map: null; })();
   for(var r3=0;r3<scnt;r3++){
     var d=dxA[r3]*n0+dyA[r3]*n1+dzA[r3]*n2;
     if(d>thr || d<-thr) continue;
     out.push({ el:els[r3],
+               cls:(_clsMap? _clsMap[r3 % _nCell].cls : undefined),
                x:dxA[r3]*u0v+dyA[r3]*u1v+dzA[r3]*u2v,
                y:dxA[r3]*v0v+dyA[r3]*v1v+dzA[r3]*v2v,
                z:d, cart:[cxA[r3],cyA[r3],czA[r3]] });
@@ -2715,7 +3583,26 @@ function drawOrbitals3D(){
   /* Resolve the active SALC ONCE (per element in the selection) so the 3D
      lobes can show the SAME linear combination the symmetry chip / 2D panel
      show.  symActiveSALC is memoised via symManifold, so this is cheap.     */
-  var salc3d={};      /* element -> {coefs, l} */
+  /* N3c (Phase 4): per-CLASS SALC map for the 3D lobes (mirrors the 2D
+     panel): every class with a selected chip draws its SALC on its own
+     atoms; legacy element map kept for the fallback gate. */
+  var salc3d={};      /* LEGACY element -> {coefs,l} */
+  var salc3dByCls={};   /* class -> {coefs,l} */
+  var salc3dSeed={};    /* class -> {sym,cart} seed site */
+  if(S.showSym){
+    var _clsL3=symClassList();
+    for(var ci3=0; ci3<_clsL3.length; ci3++){
+      var _cls3=_clsL3[ci3], _el3=_cls3.split('#')[0];
+      var _sel3=S.orbSel && S.orbSel[_el3];
+      if(!_sel3) continue;
+      var s3c=symActiveSALC(_cls3, _sel3.l);
+      if(s3c){
+        salc3dByCls[_cls3]=s3c;
+        salc3dSeed[_cls3]=classSeedSite(_cls3);
+        if(!salc3d[_el3]) salc3d[_el3]=s3c;
+      }
+    }
+  }
   var _seen={};
   for(var ai=0; ai<S.atoms.length; ai++){
     var el=S.atoms[ai].sym;
@@ -2723,17 +3610,15 @@ function drawOrbitals3D(){
     _seen[el]=1;
     var sel2=S.orbSel[el];
     if(!sel2) continue;
-    var s3=symActiveSALC(el, sel2.l);
+    var s3=salc3d[el];
     if(s3){
-      /* NOTE: do NOT rotate the coefficients by the canonical frame C here.
-         The 2D panel builds its SALC glyph straight from these coefficients
-         against realSH() in the CRYSTAL frame (see orbLineIntegralSALC), and
-         that picture is correctly aligned to the lattice.  The 3D lobe must
-         use the identical convention, so we pass the coefficients through
-         unchanged.  PG_canonicalRotation only exists to make irrep LABELS
-         conventional; its in-plane axis is picked from a mirror normal and
-         can sit on a diagonal, which is exactly what produced a 45-degree
-         tilt of the 3D lobe relative to the correctly-drawn 2D glyph.       */
+      /* F3: the coefficients here are ALREADY in the cell frame since F2
+         (symActiveSALC converts them once), so the 3D lobes and the 2D
+         glow glyphs share one convention by construction.  The old note
+         ("do NOT rotate by C") was wrong for non-axial planes: it passed
+         canonical-frame coefficients to crystal-frame consumers on BOTH
+         panels, which drew - for NaCl (101) - the out-of-plane B1u lobe
+         (and its 2D glyph) tilted 45 deg to the slab. */
       salc3d[el]=s3;
     }
   }
@@ -2761,13 +3646,34 @@ function drawOrbitals3D(){
             + (at.c[2]-sliceOrigin[2])*PLANE.n[2];
       if(Math.abs(d) > PLANE.thick/2 + 1e-9) continue;   /* not in the slice */
     }
-    var act=salc3d[at.sym];
+    /* L2d/M3: restrict to the anchor's SITE CLASS and TRANSPORT the lobes
+       per orbit member (Phase 3, mirrors M2 for the 2D panel). */
+    /* N3c/N3d: per-CLASS gate + seed transport (Phase 4): the atom's OWN
+       class decides which SALC it draws (if that class has a selection),
+       and the transport reference is that class's seed, not the anchor. */
+    var act=null;
+    var _actSeed=null;
+    if(at.cls && salc3dByCls[at.cls]){
+      act=salc3dByCls[at.cls];
+      _actSeed=salc3dSeed[at.cls];
+      /* CX11-2: anchor-relative transport for the anchor's own class
+         in the 3D lobe pass - mirrors the 2D fix above (diamond-t02
+         C3-rotation report). */
+      if(_actSeed && PLANE.anchor && anchorClassId(S.struct, PLANE.anchor)===at.cls){
+        _actSeed={sym:PLANE.anchor.sym, cart:PLANE.anchor.cart};
+      }
+    }
     var meshSet;
     if(act){
-      /* draw the SELECTED SALC (matches the chip + 2D panel).  Coefficients
-         are canonical-frame; convert to the cell frame so the lobe points the
-         right way in the crystal.  Cached on the converted vector.          */
-      meshSet=makeSALCLobeMesh(act.l, act.coefs);
+      var ori3=null;
+      if(_actSeed && S.struct){
+        ori3=orientedSALCFor(0, _actSeed, act.coefs, act.l, S.struct, at.c);
+      }
+      var coefs3=act.coefs;
+      if(ori3 && ori3.rel && (ori3.rel.opIndex>0 || (ori3.rel.t[0]||ori3.rel.t[1]||ori3.rel.t[2]))){
+        coefs3=ori3.coefs;
+      }
+      meshSet=makeSALCLobeMesh(act.l, coefs3);
     } else {
       meshSet=makeLobeMesh(sel.l, sel.m);
     }
@@ -2994,7 +3900,8 @@ function drawLabels(f){
 var shadeOn=false;
 function frame(){
   requestAnimationFrame(frame);
-  if(!gl) return;
+  if(!gl || glLost) return;
+  if(typeof gl.isContextLost==='function' && gl.isContextLost()) return;
   /* Skip the entire redraw when nothing has changed.  `needsRedraw` is set by
      every mutator (via markDirty) and defaults to true; S.spin keeps the view
      live.  resize() is still consulted (it is cheap once the size is stable)
@@ -3182,6 +4089,27 @@ function pickAtomAt(clientX,clientY){
 }
 function anchorPlaneToAtoms(atom){
   markDirty();
+  /* v2.2.18-f1a: CHIP HYGIENE ON ELEMENT CHANGE.  Chips survive
+     re-anchoring by design (they key class-labelled SALC glyphs for the
+     deliberate MIXED-OVERLAY workflow).  But a chip of a DIFFERENT element
+     left from an earlier anchor silently captures that element's glyphs
+     and makes its plain orbital menu a dead control.  When the anchor
+     moves to a DIFFERENT ELEMENT, drop chips of other elements - except
+     the class the SITE-CLASS PICKER focuses (explicit mixed intent).
+     Same-element chips are always kept. */
+  var _prevEl=(PLANE.anchor && PLANE.anchor.sym)? PLANE.anchor.sym : null;
+  var _newEl=atom && atom.sym;
+  if(_prevEl && _newEl && _prevEl!==_newEl){
+    var _focusCls=(typeof SYM!=='undefined' && SYM.siteSel)? SYM.siteSel : null;
+    var _dropA=[];
+    for(var _ka in S.symSel){
+      if(!S.symSel.hasOwnProperty(_ka)) continue;
+      var _clsA=_ka.split('|')[0];
+      var _elA=_clsA.split('#')[0];
+      if(_elA!==_newEl && _clsA!==_focusCls) _dropA.push(_ka);
+    }
+    if(_dropA.length){ for(var _dj=0; _dj<_dropA.length; _dj++) delete S.symSel[_dropA[_dj]]; }
+  }
   PLANE.anchor={ sym:atom.sym, cart:atom.c.slice() };
   PLANE.on=true;
   /* anchoring a new plane resets the view rotation (per-plane behaviour) */
@@ -3191,6 +4119,10 @@ function anchorPlaneToAtoms(atom){
   buildPlaneQuad();
   buildAnchorMarker();
   SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;              /* new anchor -> re-derive site group */
+  SYM.cacheByClass={}; _SYM_CLASS_ORDER=[]; SYM.manCacheByKey={}; SYM.manKeyOrder=[];   /* N1j: class maps too */
+  SYM.cacheByKey={}; SYM.keyOrder=[];   /* Fix #1: key map too */
+  SYM_FRAME_TF_CACHE={}; _symTfOrder=[];   /* F5: new analysis -> new frame transform */
+  _orbitRelClear();                        /* M5: relations are anchor-relative */
   updatePlanePanel();
   buildSymPanel();
   var hint=$('pickHint');
@@ -4373,7 +5305,15 @@ function _orb2dSet(k,F){
   if(i>=0) _orb2dKeys.splice(i,1);
   _orb2dKeys.push(k);
   ORB2D_CACHE[k]=F;
-  while(_orb2dKeys.length>ORB2D_CACHE_MAX) delete ORB2D_CACHE[_orb2dKeys.shift()];
+  while(_orb2dKeys.length>ORB2D_CACHE_MAX){
+    var evk=_orb2dKeys.shift();
+    delete ORB2D_CACHE[evk];
+    /* N1h: data over guesswork - record evictions so a long field session
+       tells us whether the cap (24) should be raised in a future pass. */
+    if(typeof console!=='undefined' && console.log){
+      try{ console.log('ORB2D_CACHE evicted: '+String(evk).substring(0,48)+'... (cap '+ORB2D_CACHE_MAX+')'); }catch(e){}
+    }
+  }
 }
 function _orb2dMSet(k,V){
   var i=_orb2dMKeys.indexOf(k);
@@ -4810,6 +5750,17 @@ function symSiteSign(at, anchor, salc){
      Therefore: same sign for all periodic images.  Kept as a function so a
      future phase model (e.g. Bloch phase for a supercell) has a hook. */
   if(!anchor || !at) return 1;
+  /* M4 (Phase 3): the +1 placeholder is superseded by TRANSPORT in the
+     draw paths (M2/M3).  This legacy helper now returns the transported
+     SCALAR sign when a relation is known (try the caller's coefficient
+     vector via arguments[2] when shaped like the SALC), so any remaining
+     caller stays honest; +1 for pure translations and the anchor itself. */
+  try{
+    if(typeof S!=='undefined' && S.struct && typeof orientedSALCFor==='function' && at && at.cart && arguments[2] && arguments[2].coefs){
+      var ori=orientedSALCFor(0, anchor, arguments[2].coefs, arguments[2].l||1, S.struct, at.cart);
+      if(ori && ori.rel) return ori.sign;
+    }
+  }catch(e){}
   return 1;
 }
 function drawOrbitals2D(TX,TY,scale,W,H){
@@ -4836,13 +5787,31 @@ function drawOrbitals2D(TX,TY,scale,W,H){
   var plusC=(theme==='dark')?'rgba( 90,170,255,0.55)':'rgba( 37, 99,235,0.42)';
   var minusC=(theme==='dark')?'rgba(255,120,120,0.50)':'rgba(220, 38, 38,0.38)';
   var edgeC=(theme==='dark')?'rgba(255,255,255,0.30)':'rgba(0,0,0,0.20)';
+  /* N3 (Phase 4): PER-CLASS SALC MAP for the 2D panel.  Every class with a
+   selected chip contributes its SALC (resolved through that class's own
+   site-seed, so mixed overlays of inequivalent sites draw simultaneously).
+   Legacy single-SALC behaviour (hotSALC/hotSALCEl) is kept for the anchor's
+   class so old call sites stay coherent. */
   var hotSALC=null, hotSALCEl=null, hotSALCNeg=null;
-  if(S.showSym && lastSymEl){
-    var hsel=S.orbSel[lastSymEl];
-    if(hsel){
-      hotSALC=symActiveSALC(lastSymEl, hsel.l);
-      if(hotSALC){
-        hotSALCEl=lastSymEl;
+  var classSALCs={};                 /* 'Na#1' -> {coefs,l} */
+  var classSALCSeeds={};             /* 'Na#1' -> {sym, cart} reference site */
+  if(S.showSym){
+    var _clsL=symClassList();
+    for(var ci0=0; ci0<_clsL.length; ci0++){
+      var _cls0=_clsL[ci0], _el0=_cls0.split('#')[0];
+      var _sel0=S.orbSel && S.orbSel[_el0];
+      if(!_sel0) continue;
+      var s0=symActiveSALC(_cls0, _sel0.l);
+      if(s0){
+        classSALCs[_cls0]=s0;
+        classSALCSeeds[_cls0]=classSeedSite(_cls0);
+      }
+    }
+    if(PLANE.anchor && S.struct){
+      var _anchCls=anchorClassId(S.struct, PLANE.anchor);
+      if(_anchCls && classSALCs[_anchCls]){
+        hotSALC=classSALCs[_anchCls];
+        hotSALCEl=_anchCls.split('#')[0];
         hotSALCNeg=[];
         for(var ci=0;ci<hotSALC.coefs.length;ci++) hotSALCNeg.push(-hotSALC.coefs[ci]);
       }
@@ -4866,12 +5835,42 @@ function drawOrbitals2D(TX,TY,scale,W,H){
        The sign comes from the symmetry operation that carries the anchored
        site onto that atom; sites reached only by a pure lattice translation
        keep the same coefficients (periodic repetition of the SALC). */
+    /* L2c/M2/N3 (Phases 2-4): the SALC glyph is drawn ONLY on atoms of a
+       class WITH a selected chip; each ORBIT MEMBER draws the TRANSPORTED
+       coefficients (Phase 3) relative to THAT CLASS'S SEED site (Phase 4),
+       so mixed overlays of inequivalent classes draw simultaneously and
+       honestly.  Atoms of classes without a selection keep the PLAIN
+       component (matches the per-element rows).                       */
     var drawSALC=false;
-    if(hotSALC && at.el===hotSALCEl){
-      var coefs=hotSALC.coefs;
-      var ph=symSiteSign(at, PLANE.anchor, hotSALC);
-      if(ph<0) coefs=hotSALCNeg;
-      drawProjectedSALC(x,y,Rpx*1.06,at.el,sel.l,coefs,plusC,minusC,edgeC,sel.n);
+    if(S.showSym && at.cls && classSALCs[at.cls]){
+      var cs3=classSALCs[at.cls];
+      var seed3=classSALCSeeds[at.cls];
+      /* CX11-1: ANCHOR-RELATIVE TRANSPORT for the ANCHOR'S OWN CLASS.
+         The class seed can be a different, non-translation-equivalent
+         site (diamond t02: seed (0,0,0), anchor (1/4,1/4,1/4)); from
+         the seed an atom that is a pure F-translation of the ANCHOR
+         can be related only by out-of-subgroup ops (a C3 body-
+         diagonal), whose D_l(R) does not preserve the SALC - one
+         atom drew a 120-deg-rotated glyph while every translation
+         copy drew the seed vector (user report: t02 (001), anchors
+         at z=1/4 and z=3/4).  The ANCHOR is itself a member of the
+         class (and of the drawn layer), so referencing it makes
+         'translation images of the anchor draw identically' true by
+         construction.  Other classes keep seed transport (the
+         mixed-overlay design is unchanged). */
+      var _ref3=seed3;
+      if(seed3 && PLANE.anchor && S.struct && anchorClassId(S.struct, PLANE.anchor)===at.cls){
+        _ref3={sym:PLANE.anchor.sym, cart:PLANE.anchor.cart};
+      }
+      var coefs=cs3.coefs;
+      var ori=null;
+      if(_ref3 && S.struct){
+        ori=orientedSALCFor(0, _ref3, cs3.coefs, cs3.l, S.struct, at.cart);
+      }
+      if(ori && ori.rel && (ori.rel.opIndex>0 || (ori.rel.t[0]||ori.rel.t[1]||ori.rel.t[2]))){
+        coefs=ori.coefs;
+      }
+      drawProjectedSALC(x,y,Rpx*1.06,at.el,cs3.l,coefs,plusC,minusC,edgeC,sel.n);
       drawSALC=true;
     }
     if(!drawSALC){
@@ -5255,12 +6254,17 @@ var PG_TABLES = (function(){
   T['Ci']  = {classes:['E','i'], sizes:[1,1], irreps:{Ag:[1,1],Au:[1,-1]}};
   T['Cs']  = {classes:['E','s'], sizes:[1,1], irreps:{ "A'":[1,1],"A''":[1,-1] }};
   T['C2']  = {classes:['E','C2'], sizes:[1,1], irreps:{A:[1,1],B:[1,-1]}};
+  /* Naming: the 2-D irrep of a group with ONE E pair uses the ITA/Bilbao name
+     E (not E1); the complex-conjugate partner row keeps an internal '_c'
+     suffix and is merged away by PG_decompose (matched by conjugate value,
+     not by name), so only 'E' is ever shown.  Groups with TWO independent
+     E pairs (C6, C6h, C6v, D6, D6h) keep E1/E2. */
   T['C3']  = {classes:['E','C3','C3_2'], sizes:[1,1,1],
-              irreps:{A:[1,1,1],E1:[1,w,w2],E2:[1,w2,w]}};
+              irreps:{A:[1,1,1],E:[1,w,w2],E_c:[1,w2,w]}};
   T['C4']  = {classes:['E','C4','C2','C4_3'], sizes:[1,1,1,1],
-              irreps:{A:[1,1,1,1],B:[1,-1,1,-1],E1:[1,II,-1,mI],E2:[1,mI,-1,II]}};
+              irreps:{A:[1,1,1,1],B:[1,-1,1,-1],E:[1,II,-1,mI],E_c:[1,mI,-1,II]}};
   T['S4']  = {classes:['E','S4','C2','S4_3'], sizes:[1,1,1,1],
-              irreps:{A:[1,1,1,1],B:[1,-1,1,-1],E1:[1,II,-1,mI],E2:[1,mI,-1,II]}};
+              irreps:{A:[1,1,1,1],B:[1,-1,1,-1],E:[1,II,-1,mI],E_c:[1,mI,-1,II]}};
   T['C2v'] = {classes:['E','C2','sv','sv2'], sizes:[1,1,1,1],
               irreps:{A1:[1,1,1,1],A2:[1,1,-1,-1],B1:[1,-1,1,-1],B2:[1,-1,-1,1]}};
   T['C3v'] = {classes:['E','C3','sv'], sizes:[1,2,3],
@@ -5304,12 +6308,12 @@ var PG_TABLES = (function(){
                       B1u:[1,-1,1,-1,1,-1,-1,1,-1,1,-1,1],B2u:[1,-1,1,-1,-1,1,-1,1,-1,1,1,-1],
                       E1u:[2,1,-1,-2,0,0,-2,-1,1,2,0,0],E2u:[2,-1,-1,2,0,0,-2,1,1,-2,0,0]}};
   T['T']   = {classes:['E','C3','C3_2','C2'], sizes:[1,4,4,3],
-              irreps:{A:[1,1,1,1],E1:[1,w,w2,1],E2:[1,w2,w,1],T:[3,0,0,-1]}};
+              irreps:{A:[1,1,1,1],E:[1,w,w2,1],E_c:[1,w2,w,1],T:[3,0,0,-1]}};
   T['Th']  = {classes:['E','C3','C3_2','C2','i','S6','S6_5','sd'], sizes:[1,4,4,3,1,4,4,3],
               irreps:{Ag:[1,1,1,1,1,1,1,1],Au:[1,1,1,1,-1,-1,-1,-1],
-                      E1g:[1,w,w2,1,1,w,w2,1],E2g:[1,w2,w,1,1,w2,w,1],
-                      E1u:[1,w,w2,1,-1,mulN(w,-1),mulN(w2,-1),-1],
-                      E2u:[1,w2,w,1,-1,mulN(w2,-1),mulN(w,-1),-1],
+                      Eg:[1,w,w2,1,1,w,w2,1],Eg_c:[1,w2,w,1,1,w2,w,1],
+                      Eu:[1,w,w2,1,-1,mulN(w,-1),mulN(w2,-1),-1],
+                      Eu_c:[1,w2,w,1,-1,mulN(w2,-1),mulN(w,-1),-1],
                       Tg:[3,0,0,-1,3,0,0,-1],Tu:[3,0,0,-1,-3,0,0,1]}};
   T['Td']  = {classes:['E','C3','C2','S4','sd'], sizes:[1,8,3,6,6],
               irreps:{A1:[1,1,1,1,1],A2:[1,1,1,-1,-1],E:[2,-1,2,0,0],T1:[3,0,-1,1,-1],T2:[3,0,-1,-1,1]}};
@@ -5324,9 +6328,9 @@ var PG_TABLES = (function(){
                       T2u:[3,0,1,-1,-1,-3,1,0,1,-1]}};
   T['C3h'] = {classes:['E','C3','C3_2','sh','S3','S3_5'], sizes:[1,1,1,1,1,1],
               irreps:{"A'":[1,1,1,1,1,1],"A''":[1,1,1,-1,-1,-1],
-                      "E1'":[1,w,w2,1,w,w2],"E2'":[1,w2,w,1,w2,w],
-                      "E1''":[1,w,w2,-1,mulN(w,-1),mulN(w2,-1)],
-                      "E2''":[1,w2,w,-1,mulN(w2,-1),mulN(w,-1)]}};
+                      "E'":[1,w,w2,1,w,w2],"E'_c":[1,w2,w,1,w2,w],
+                      "E''":[1,w,w2,-1,mulN(w,-1),mulN(w2,-1)],
+                      "E''_c":[1,w2,w,-1,mulN(w2,-1),mulN(w,-1)]}};
   T['C6']  = {classes:['E','C6','C3','C2','C3_2','C6_5'], sizes:[1,1,1,1,1,1],
               irreps:{A:[1,1,1,1,1,1],B:[1,-1,1,-1,1,-1],
                       E1:[1,exp6(1),exp6(2),-1,exp6(4),exp6(5)],
@@ -5339,6 +6343,17 @@ var PG_TABLES = (function(){
   }
   return T;
 })();
+
+/* CX5: five additional PG_TABLES (D2d, D3h, C3i, C4h, C6h) - the missing-site-group gap pass.
+   Appended as a merge onto the IIFE-built PG_TABLES (same object shape: classes/sizes/irreps,
+   complex characters as [re,im]). Abelian tables C3i/C4h/C6h use SINGLETON classes per PG_conjugacyClasses
+   output; D3h uses the chemistry-merged class sizes [1,2,3,1,2,3]. tableSig needs the extended branch
+   (CX5-1) for S3 rows in C6h/D3h (sigma_h.C3=i.C6, trace -2). D2d validated from engine-exact S4Z+C2X. */
+PG_TABLES['D2d']={"classes":["E","S4","C2z","C2a","sd"],"sizes":[1,2,1,2,2],"irreps":{"A1":[1,1,1,1,1],"A2":[1,1,1,-1,-1],"B1":[1,-1,1,1,-1],"B2":[1,-1,1,-1,1],"E":[2,0,-2,0,0]}};
+PG_TABLES['D3h']={"classes":["E","C3","C2","sh","S3","sd"],"sizes":[1,2,3,1,2,3],"irreps":{"A1'":[1,1,1,1,1,1],"A2'":[1,1,-1,1,1,-1],"E'":[2,-1,0,2,-1,0],"A1''":[1,1,1,-1,-1,-1],"A2''":[1,1,-1,-1,-1,1],"E''":[2,-1,0,-2,1,0]}};
+PG_TABLES['C3i']={"classes":["E","C3","C3_2","i","S6","S6_5"],"sizes":[1,1,1,1,1,1],"irreps":{"Ag":[1,1,1,1,1,1],"Au":[1,1,1,-1,-1,-1],"Eg":[1,[-0.5,0.8660254038],[-0.5,-0.8660254038],1,[-0.5,0.8660254038],[-0.5,-0.8660254038]],"Eu":[1,[-0.5,0.8660254038],[-0.5,-0.8660254038],-1,[0.5,-0.8660254038],[0.5,0.8660254038]],"Eg_c":[1,[-0.5,-0.8660254038],[-0.5,0.8660254038],1,[-0.5,-0.8660254038],[-0.5,0.8660254038]],"Eu_c":[1,[-0.5,-0.8660254038],[-0.5,0.8660254038],-1,[0.5,0.8660254038],[0.5,-0.8660254038]]}};
+PG_TABLES['C4h']={"classes":["E","C4","C2","C4_3","i","S4","sh","S4_3"],"sizes":[1,1,1,1,1,1,1,1],"irreps":{"Ag":[1,1,1,1,1,1,1,1],"Au":[1,1,1,1,-1,-1,-1,-1],"Eg":[1,[0.0,1.0],-1,[-0.0,-1.0],1,[-0.0,-1.0],-1,[0.0,1.0]],"Eu":[1,[0.0,1.0],-1,[-0.0,-1.0],-1,[0.0,1.0],1,[-0.0,-1.0]],"Bg":[1,-1,1,-1,1,-1,1,-1],"Bu":[1,-1,1,-1,-1,1,-1,1],"Eg_c":[1,[-0.0,-1.0],-1,[0.0,1.0],1,[0.0,1.0],-1,[-0.0,-1.0]],"Eu_c":[1,[-0.0,-1.0],-1,[0.0,1.0],-1,[-0.0,-1.0],1,[0.0,1.0]]}};
+PG_TABLES['C6h']={"classes":["E","C6","C6_5","C3","C3_2","C2","i","S3","S3_5","S6","S6_5","sh"],"sizes":[1,1,1,1,1,1,1,1,1,1,1,1],"irreps":{"Ag":[1,1,1,1,1,1,1,1,1,1,1,1],"Au":[1,1,1,1,1,1,-1,-1,-1,-1,-1,-1],"E1g":[1,[0.5,0.8660254038],[0.5,-0.8660254038],[-0.5,0.8660254038],[-0.5,-0.8660254038],-1,1,[0.5,-0.8660254038],[0.5,0.8660254038],[-0.5,-0.8660254038],[-0.5,0.8660254038],-1],"E1u":[1,[0.5,0.8660254038],[0.5,-0.8660254038],[-0.5,0.8660254038],[-0.5,-0.8660254038],-1,-1,[-0.5,0.8660254038],[-0.5,-0.8660254038],[0.5,0.8660254038],[0.5,-0.8660254038],1],"E2g":[1,[-0.5,0.8660254038],[-0.5,-0.8660254038],[-0.5,-0.8660254038],[-0.5,0.8660254038],1,1,[-0.5,-0.8660254038],[-0.5,0.8660254038],[-0.5,0.8660254038],[-0.5,-0.8660254038],1],"E2u":[1,[-0.5,0.8660254038],[-0.5,-0.8660254038],[-0.5,-0.8660254038],[-0.5,0.8660254038],1,-1,[0.5,0.8660254038],[0.5,-0.8660254038],[0.5,-0.8660254038],[0.5,0.8660254038],-1],"Bg":[1,-1,-1,1,1,-1,1,-1,-1,1,1,-1],"Bu":[1,-1,-1,1,1,-1,-1,1,1,-1,-1,1],"E2gc":[1,[-0.5,-0.8660254038],[-0.5,0.8660254038],[-0.5,0.8660254038],[-0.5,-0.8660254038],1,1,[-0.5,0.8660254038],[-0.5,-0.8660254038],[-0.5,-0.8660254038],[-0.5,0.8660254038],1],"E2uc":[1,[-0.5,-0.8660254038],[-0.5,0.8660254038],[-0.5,0.8660254038],[-0.5,-0.8660254038],1,-1,[0.5,-0.8660254038],[0.5,0.8660254038],[0.5,0.8660254038],[0.5,-0.8660254038],-1],"E1gc":[1,[0.5,-0.8660254038],[0.5,0.8660254038],[-0.5,-0.8660254038],[-0.5,0.8660254038],-1,1,[0.5,0.8660254038],[0.5,-0.8660254038],[-0.5,0.8660254038],[-0.5,-0.8660254038],-1],"E1uc":[1,[0.5,-0.8660254038],[0.5,0.8660254038],[-0.5,-0.8660254038],[-0.5,0.8660254038],-1,-1,[-0.5,-0.8660254038],[-0.5,0.8660254038],[0.5,-0.8660254038],[0.5,0.8660254038],1]}};
 
 /* ===== small complex helpers ===== */
 function PG_cadd(a,b){ return [a[0]+b[0], a[1]+b[1]]; }
@@ -5370,11 +6385,53 @@ function PG_key(A){
   for(var i=0;i<3;i++)for(var j=0;j<3;j++) s+=PG_snap(A[i][j])+',';
   return s;
 }
+/* K2: hash the WHOLE symmetry-operation list into one compact token for
+   the symAnalyze() analysis key.  Each op is canonicalised (PG_roundM on
+   the rotation, PG_snap-rounded translation) into a string token; the
+   tokens are SORTED, then the joined string is FNV-1a hashed, so the
+   token multiset - not the listing ORDER - determines the key.  That is
+   the correct invariance: PG_closure() itself dedupes by matrix key, so
+   the same ops listed in a different order must hash identically. */
+function symOpsHash(ops){
+  if(!ops || !ops.length) return 'none';
+  var toks=[];
+  for(var i=0;i<ops.length;i++){
+    var M=PG_roundM(ops[i].M);
+    var c=ops[i].c||[0,0,0];
+    toks.push( PG_key(M)+Math.round(PG_snap(c[0])*1e6)+','
+              +Math.round(PG_snap(c[1])*1e6)+','+Math.round(PG_snap(c[2])*1e6) );
+  }
+  toks.sort();
+  var h=0x811c9dc5;
+  var s=toks.join('|');
+  for(var p2=0;p2<s.length;p2++){
+    h^=s.charCodeAt(p2);
+    h=(h*0x01000193)>>>0;
+  }
+  return ('0000000'+h.toString(16)).slice(-8);
+}
 function PG_order(A){
   var P=PG_eye();
-  for(var n=1;n<=24;n++){ P=PG_mm(P,A); if(PG_key(P)===PG_key(PG_eye())) return n; }
+  /* Tolerance test, not PG_key equality: for a non-orthogonal cell the
+     rotation is irrational and A^n never keys exactly to I (see PG_mClose). */
+  for(var n=1;n<=24;n++){ P=PG_mm(P,A); if(PG_mClose(P,PG_eye())) return n; }
   return 0;
 }
+/* Snap a matrix entry to the exact rational/surd it was computed from, so
+   PG_key() can compare rotations for equality instead of comparing floats.
+   The tolerances are deliberately TIGHT and staged: exact rationals (0, +-1,
+   +-1/2) use 1e-9, while the two irrational constants that appear in
+   crystallographic rotation matrices - sqrt(3)/2 (hexagonal 60/120 deg) and
+   1/sqrt(2) (body-diagonal 90 deg) - use 1e-8, a looser band because those
+   entries accumulate more floating-point error through repeated SG_mm/PG_mm
+   composition.  The two surd bands are kept EQUAL to each other on purpose:
+   asymmetric tolerances could snap one member of a conjugate set but not its
+   twin, fragmenting a class (the failure mode behind the D6h fix).  Anything
+   that is not one of these constants falls through to a 1e-7 rounding grid,
+   which is coarser than the surd bands so that a value just outside a surd
+   tolerance still gets a stable key rather than a raw float.  The SG_* engine
+   keys at 1e-6 instead (its matrices are small-integer generators, not
+   composed surds), so the two engines use different grids by design. */
 function PG_snap(x){
   if(Math.abs(x)<1e-9) return 0;
   if(Math.abs(x-Math.round(x))<1e-9) return Math.round(x);
@@ -5387,20 +6444,58 @@ function PG_snap(x){
 function PG_roundM(A){ var B=[]; for(var i=0;i<3;i++){ var r=[]; for(var j=0;j<3;j++) r.push(PG_snap(A[i][j])); B.push(r);} return B; }
 
 /* ===== group closure ===== */
+/* Componentwise matrix closeness.  PG_key() compares rotations via PG_snap,
+   whose fallback rounds irrational entries to a 1e-7 grid.  For INTEGER
+   crystallographic matrices (the SG engine, and any orthogonal-cell site
+   group) two equal rotations snap to the identical key, so PG_key is exact.
+   For a NON-orthogonal cell (rhombohedral axes) the site-group rotations
+   R = A M A^-1 are genuinely orthogonal but IRRATIONAL, and repeated
+   composition accumulates ~1e-7 error: two products that are the same
+   rotation can straddle a 1e-7 grid boundary and produce different keys, so
+   the hash-based closure never terminates (returns null -> no site group).
+   PG_MCLOSE_TOL is far above that accumulation (~1e-7) and far below the
+   smallest genuine entry separation in any crystallographic point group
+   (~0.1), so a tolerance scan is both safe and sufficient. */
+var PG_MCLOSE_TOL=1e-4;
+function PG_mClose(A,B,tol){
+  tol=(tol===undefined)?PG_MCLOSE_TOL:tol;
+  for(var i=0;i<3;i++) for(var j=0;j<3;j++){
+    if(Math.abs(A[i][j]-B[i][j])>tol) return false;
+  }
+  return true;
+}
+/* Membership test for a closure list: first the exact snapped key (O(1), the
+   fast path for integer groups), then - only on a key miss - a tolerance
+   scan.  On a tolerance hit the STORED representative is returned so every
+   downstream consumer (PG_key, classes, identify) keeps seeing one matrix
+   per group element.  Returns {idx, hit}. */
+function PG_closureFind(list, keys, P){
+  var k=PG_key(P);
+  if(keys[k]!==undefined) return {idx:keys[k], hit:true};
+  for(var i=0;i<list.length;i++){
+    if(PG_mClose(list[i],P)) return {idx:i, hit:true};
+  }
+  return {idx:-1, hit:false};
+}
 function PG_closure(gens, maxn){
   maxn=maxn||400;
-  var seen={}, list=[], I=PG_eye();
-  seen[PG_key(I)]=1; list.push(I);
+  var keys={}, list=[], I=PG_eye();
+  keys[PG_key(I)]=0; list.push(I);
   var frontier=[I];
   while(frontier.length){
     var nxt=[];
     for(var a=0;a<frontier.length;a++){
       for(var g=0;g<gens.length;g++){
-        var P=PG_roundM(PG_mm(frontier[a],gens[g])), k=PG_key(P);
-        if(!seen[k]){
-          seen[k]=1; list.push(P); nxt.push(P);
-          if(list.length>maxn) return null;
+        var P=PG_roundM(PG_mm(frontier[a],gens[g]));
+        var f=PG_closureFind(list, keys, P);
+        if(f.hit){
+          /* Re-enqueue the STORED representative's index path?  No: closure
+             only needs the element set, not the path.  A tolerance match is
+             a no-op. */
+          continue;
         }
+        keys[PG_key(P)]=list.length; list.push(P); nxt.push(P);
+        if(list.length>maxn) return null;
       }
     }
     frontier=nxt;
@@ -5416,10 +6511,26 @@ function PG_conjugacyClasses(G){
   for(var z=0;z<n;z++) cls[z]=-1;
   for(var i2=0;i2<n;i2++){
     if(cls[i2]>=0) continue;
+    /* SG-PASS D6H FIX: the conjugator must use the TRUE INVERSE h^-1 of the
+       conjugating element, NOT the transpose h^T.  Conjugation is
+       h g h^-1; for ORTHOGONAL matrices (cubic/ortho bases) h^T == h^-1 and
+       the transpose shortcut is exact - which is why every group analysed
+       before this pass identified correctly.  In FRACTIONAL hexagonal-axes
+       coordinates (gamma=120deg) the rotation matrices are NOT orthogonal,
+       h^T != h^-1, the transpose produced spurious 'conjugates', and D6h's
+       3-element classes (3C2', 3C2'', 3sigma_v, 3sigma_d) each split 2+1
+       into 16 bogus classes that matched no table row.  PG_inv3 already
+       exists (used for cell inverses); integer rotation matrices invert
+       exactly, so this change is bit-identical for all previously working
+       groups and only repairs non-orthogonal bases.                            */
     var ci=classes.length, mem=[], gi=G[i2];
+    var hinv=[];   /* per-element true inverses, memoised on the pass */
     for(var j=0;j<n;j++){
       var h=G[j];
-      var conj=PG_roundM(PG_mm(PG_mm(h,gi),PG_mT(h)));
+      var hi=hinv[j];
+      if(hi===undefined){ hi=PG_inv3(h); hinv[j]=hi; }
+      if(!hi) continue;               /* singular: cannot happen for rotations */
+      var conj=PG_roundM(PG_mm(PG_mm(h,gi),hi));
       var jj=idx[PG_key(conj)];
       if(jj!==undefined && cls[jj]<0){ cls[jj]=ci; mem.push(jj); }
     }
@@ -5437,7 +6548,21 @@ function PG_runtimeSig(G,mem){
   if(o===2 && Math.abs(t-1)<1e-6) return 's|2|1';
   return 'S'+o+'|'+t;
 }
-function PG_tableSig(name){
+function PG_tableSig(name, groupName){
+  /* SG-PASS D6H FIX 2 (v2, D6H-3): S-class NAMES are per-table conventions,
+     NOT global operator identities.  'S6' in D3d means the C3.i class
+     (order 6, trace 0); in Oh 'S6' means the 2*C3.i class (also trace 0);
+     but in D6h the two rotoinversion classes are C3.i ('S3', trace 0) and
+     C6.i ('S6', trace -2).  The original static map made every S-row emit
+     trace-0 and D6h unidentifiable; my first fix (S3->S6|0, S6->S6|-2
+     unconditionally) made D3d/Oh unidentifiable instead.  The CORRECT rule,
+     verified against live dumps of all four groups: the table row's own
+     (order, trace) pair is the operator signature, and the S-subscript
+     convention differs per group (D6h uses S3=C3.i and S6=C6.i; D3d/Oh use
+     S6=C3.i and S4=C4.i with trace-0/(-1) respectively).  Map per (group,
+     name) with the D6h special case explicit; all other tables keep the
+     trace-0 convention that the pre-fix code used for S6 (their live
+     classes are trace-0 rotoinversions - verifi    ed for D3d and Oh).  */
   if(name==='E') return 'E|1|3';
   if(name==='i') return 'i|2|-3';
   if(name.charAt(0)==='s') return 's|2|1';
@@ -5446,7 +6571,28 @@ function PG_tableSig(name){
     var tt={2:-1,3:0,4:1,6:2}[o]; return 'C'+o+'|'+tt; }
   var mS=/^S(\d+)/.exec(name);
   if(mS){ var o2=parseInt(mS[1],10);
-    var tt2={3:0,4:-1,6:0}[o2]; return 'S'+o2+'|'+tt2; }
+    if(groupName==='D6h'||groupName==='C3h'||groupName==='C6h'||groupName==='D3h'){   /* CX5-1: C6h/D3h S3=sigma_h.C3=i.C6 trace -2; C3i S6 stays legacy 0 */   /* CX-2: C3h S3=sigma_h.C3=i.C6 trace -2, same convention as D6h (D6H-3) */
+      /* D6H-FIX-6: the TABLE row names follow the S_n == sigma_h . C_n
+         convention (S3 = C3.sigma_h = i.C6, S6 = C6.sigma_h = i.C3 - the
+         SAME convention as C3h's rows and ITA nomenclature).  Operator
+         traces in the 3-D rep: S3 = i.C6 -> trace -2; S6 = i.C3 -> 0.
+         FIX-2 had these two SWAPPED, which forced the runtime i.C3 class
+         (trace 0) to pair with the table's S3 row; every bucket permutation
+         then failed the B1g/B1u/E1g integrality (proven impossible to
+         repair by re-pairing: the failure is mod-3 in the C2/s bucket
+         assignment), so D6h could never identify despite perfect runtime
+         classes and characters. */
+      if(o2===3) return 'S6|-2';     /* D6h 'S3' row = S3 = C3.sigma_h = i.C6 : trace -2 */
+      if(o2===6) return 'S6|0';       /* D6h 'S6' row = S6 = C6.sigma_h = i.C3 : trace 0   */
+      if(o2===4) return 'S4|-1';
+    }
+    /* all other tables: legacy convention - S rows are C_n.i type with the
+       trace from the original static map (D3d 'S6'->0, Oh 'S6'->0, 'S4'->-1,
+       C3h 'S3'->0 x2).  Verified live: D3d rsig has S6|0; Oh rsig has
+       S6|0 and S4|-1; C3h rsig has S6|0 twice; Td uses S4|-1.             */
+    var tt2={3:0,4:-1,6:0}[o2];
+    return 'S'+o2+'|'+tt2;
+  }
   return '?';
 }
 
@@ -5506,6 +6652,24 @@ function PG_solveLin(Amat,Bmat,n){
   return X;
 }
 var PG_REP_CACHE={};
+/* Bounded LRU.  The key is l|PG_key(R); R is a rotation matrix in the CELL
+   frame (PG_mm(Ac,M,Ai)), so for a non-orthogonal basis (hexagonal, body-
+   diagonal frames) its entries can be irrational and PG_key will not
+   collapse distinct anchors' matrices - a long session cycling anchors/
+   planes mints a fresh D-matrix (an N x n least-squares solve, N>=96) per
+   key and never released them.  Cap it; a miss just re-solves. */
+var _pgRepKeys=[], PG_REP_CACHE_MAX=64;
+function _pgRepSet(k,D){
+  var i=_pgRepKeys.indexOf(k);
+  if(i>=0) _pgRepKeys.splice(i,1);
+  _pgRepKeys.push(k);
+  PG_REP_CACHE[k]=D;
+  while(_pgRepKeys.length>PG_REP_CACHE_MAX){
+    var evk=_pgRepKeys.shift();
+    if(evk!==k) delete PG_REP_CACHE[evk];
+  }
+  return D;
+}
 function PG_repMatrix(l,R){
   var key=l+'|'+PG_key(R);
   if(PG_REP_CACHE[key]) return PG_REP_CACHE[key];
@@ -5529,8 +6693,7 @@ function PG_repMatrix(l,R){
     }
   }
   var D=PG_solveLin(AtA,AtB,n);
-  PG_REP_CACHE[key]=D;
-  return D;
+  return _pgRepSet(key, D);
 }
 
 /* ===== identify the point group and the runtime-order -> table-order permutation =====
@@ -5555,7 +6718,7 @@ function PG_identifyGroup(G, cls, classes){
     var ok=true;
     for(var q2=0;q2<ncl;q2++) if(tSorted[q2]!==sizeSorted[q2]){ ok=false; break; }
     if(!ok) continue;
-    var tsig=[]; for(var q3=0;q3<T.classes.length;q3++) tsig.push(PG_tableSig(T.classes[q3]));
+    var tsig=[]; for(var q3=0;q3<T.classes.length;q3++) tsig.push(PG_tableSig(T.classes[q3], name));   /* D6H-4: group-aware */
     /* signature multisets must agree */
     var a1=rsig.slice().sort(), a2=tsig.slice().sort();
     var ok2=true;
@@ -5582,7 +6745,12 @@ function PG_findPermutation(G, cls, classes, T, rsig, tsig){
   /* iterate the cartesian product */
   var idxList=new Array(choices.length).fill(0);
   var guard=0;
-  while(guard++<200000){
+  /* D6H-5 INSTRUMENT: candidates-permutation counters on the global object
+     so guard-exhaustion vs genuine rejection is observable; guard 200000
+     -> 2000000 while instrumented. */
+  if(typeof window!=='undefined' && window){ window.__PG_PERM_TRIED=0; window.__PG_PERM_EXHAUSTED=false; }
+  while(guard++<2000000){
+    if(typeof window!=='undefined' && window) window.__PG_PERM_TRIED=guard;
     var perm=new Array(ncl);
     for(var c=0;c<choices.length;c++){
       var assign=choices[c][idxList[c]];
@@ -5597,7 +6765,10 @@ function PG_findPermutation(G, cls, classes, T, rsig, tsig){
       if(idxList[pos]<choices[pos].length) break;
       idxList[pos]=0; pos++;
     }
-    if(pos===choices.length) break;
+    if(pos===choices.length){
+      if(typeof window!=='undefined' && window) window.__PG_PERM_EXHAUSTED=true;
+      break;
+    }
   }
   return null;
 }
@@ -5640,7 +6811,13 @@ function PG_permConsistent(G,cls,classes,T,perm){
         nr+=sizes[c2]*(cb[0]*chiG[c2]);   /* chi_Gamma real */
       }
       nr/=NG;
-      if(Math.abs(nr-Math.round(nr))>1e-6 || nr<-1e-6) return false;
+      if(Math.abs(nr-Math.round(nr))>1e-6 || nr<-1e-6){
+        if(typeof window!=='undefined' && window){
+          window.__PG_PC_FAIL=(window.__PG_PC_FAIL||[]);
+          if(window.__PG_PC_FAIL.length<8) window.__PG_PC_FAIL.push({stg:'integrality', l:l, irrep:names[ii], nr:nr});
+        }
+        return false;
+      }
       /* (b) idempotency of the projector, but only when this irrep actually
          appears in the manifold (otherwise the projector is 0 and P^2=P is
          trivially satisfied, so the test still holds). */
@@ -5653,10 +6830,20 @@ function PG_permConsistent(G,cls,classes,T,perm){
         var Rm=base[gi2];
         for(var a2=0;a2<n;a2++) for(var b2=0;b2<n;b2++) P[a2][b2]+=ch[0]*Rm[a2][b2];
       }
-      for(var a3=0;a3<n;a3++) for(var b3=0;b3<n;b3++) P[a3][b3]*=d/NG;
+      /* CX-1: complex 1-D rows need the JOINT (chi+chi*) pair projector,
+         scale 2d/NG - Re(chi) alone is a HALF projector failing
+         idempotency by exactly 0.25 (S4/C3/C4/C6/T/Th dev observed). */
+      var cx2=false; for(var ci=0;ci<chi.length;ci++){ var cb2=PG_asC(chi[ci]); if(Math.abs(cb2[1])>1e-9){ cx2=true; break; } }
+      for(var a3=0;a3<n;a3++) for(var b3=0;b3<n;b3++) P[a3][b3]*=(cx2?(2*d/NG):(d/NG));
       for(var a4=0;a4<n;a4++) for(var b4=0;b4<n;b4++){
         var acc=0; for(var k=0;k<n;k++) acc+=P[a4][k]*P[k][b4];
-        if(Math.abs(acc-P[a4][b4])>1e-6) return false;
+        if(Math.abs(acc-P[a4][b4])>1e-6){
+          if(typeof window!=='undefined' && window){
+            window.__PG_PC_FAIL=(window.__PG_PC_FAIL||[]);
+            if(window.__PG_PC_FAIL.length<8) window.__PG_PC_FAIL.push({stg:'idempotency', l:l, irrep:names[ii], dev:Math.abs(acc-P[a4][b4])});
+          }
+          return false;
+        }
       }
     }
   }
@@ -5674,9 +6861,35 @@ function PG_decompose(G, cls, classes, ident, l){
     for(var m=0;m<classes[c].length;m++) s+=PG_trace(base[classes[c][m]]);
     chiG.push(s/classes[c].length);
   }
-  var out=[];
+  /* CX-4: MERGE conjugate 1-D complex rows (e.g. C6 E1/E1c, T E1/E2)
+     into ONE realified part of dim 2.  A real representation never
+     contains a single complex row alone: chi and chi* occur together
+     with equal real multiplicities, and their real pair spans the same
+     isotypic space.  Emitting both rows separately would list the same
+     SALC subspace twice; the merged part carries dim=2 (per copy) and
+     the multiplicity the real formula already returns, so vector
+     counts stay exact (e.g. C3 l=2 = A + E(mult 2) -> 4 vectors). */
+  var out=[], seenD={};
   for(var nm in T.irreps){
+    if(seenD[nm]) continue;
     var chi=T.irreps[nm];
+    var cxD=false;
+    for(var ciD=0;ciD<chi.length;ciD++){ var cbD=PG_asC(chi[ciD]); if(Math.abs(cbD[1])>1e-9){ cxD=true; break; } }
+    var pair=null;
+    if(cxD){
+      for(var nm2 in T.irreps){
+        if(nm2!==nm){
+          var c2r=T.irreps[nm2];
+          var sameR=true;
+          for(var qD=0;qD<chi.length;qD++){
+            var e1=PG_asC(chi[qD]), e2=PG_asC(c2r[qD]);
+            if(Math.abs(e1[0]-e2[0])>1e-9 || Math.abs(e1[1]+e2[1])>1e-9){ sameR=false; break; }
+          }
+          if(sameR){ pair=nm2; break; }
+        }
+      }
+    }
+    if(pair){ seenD[pair]=1; }
     var re=0, im=0;
     for(var c2=0;c2<ncl;c2++){
       var cb=PG_asC(chi[perm[c2]]);
@@ -5684,7 +6897,8 @@ function PG_decompose(G, cls, classes, ident, l){
       im+=sizes[c2]*(-cb[1]*chiG[c2]);   /* conj */
     }
     var mult=re/G.length;
-    out.push({name:nm, dim:Math.round(PG_asC(chi[0])[0]), mult:mult});
+    var rd=Math.round(PG_asC(chi[0])[0]);
+    out.push({name:nm, dim:(pair?2*rd:rd), mult:mult, pair:pair});
   }
   return {chiG:chiG, parts:out, base:base};
 }
@@ -5848,6 +7062,91 @@ function PG_alignToPlane(vecs, l, n){
 
 /* Fraction of |psi|^2 lying along the plane normal, in [0,1].  Uses the same
    second-moment matrix:  fraction = v^T M v / (normalisation of Y a^2). */
+/* I1: crystal-axes orientation for a degenerate-irrep basis - the UNCHECKED
+   state of the align checkbox.  V is an orthonormal basis of the irrep
+   subspace in CANONICAL-frame coefficients; an.C converts frames.  METHOD:
+   every CELL-frame realSH basis function (p_z/p_x/p_y along the crystal
+   c/a/b axes, d_..., f_...) is projected onto span(V); the strongest
+   projections - re-orthogonalised in order, ties broken by the basis index
+   (the ORB_NAMES order) - form the new basis, so each SALC is a PURE
+   crystallographic orbital wherever the subspace contains one and mixed
+   only where the symmetry forces it.  Remaining slots are completed from
+   the input basis (deterministic).  cellVecs returns the CELL-frame
+   coefficients of each vector so the chips can name them honestly.  */
+function PG_alignToCrystalAxes(V, l, an){
+  var d=V.length, n=2*l+1;
+  var D_c2n=null, D_n2c=null;
+  if(typeof PG_repMatrix==='function' && an && an.C && typeof PG_mT==='function'){
+    D_c2n=PG_repMatrix(l, an.C);
+    D_n2c=PG_repMatrix(l, PG_mT(an.C));
+  }
+  var ncan=(an? symCanonicalNormal(an) : [0,0,1]);
+  var out=[], cellOut=[];
+  if(D_c2n){
+    var cand=[];
+    for(var m=0;m<n;m++){
+      var w=[]; for(var r=0;r<n;r++) w.push(0);
+      for(var i=0;i<d;i++){
+        var prj=0;
+        for(var m2=0;m2<n;m2++) prj+=V[i][m2]*D_c2n[m2][m];
+        if(Math.abs(prj)<1e-14) continue;
+        for(var m3=0;m3<n;m3++) w[m3]+=prj*V[i][m3];
+      }
+      var n2v=0; for(var m4=0;m4<n;m4++) n2v+=w[m4]*w[m4];
+      cand.push({m:m, w:w, n2:n2v});
+    }
+    cand.sort(function(a,b){ return (b.n2-a.n2) || (a.m-b.m); });
+    for(var q=0;q<cand.length && out.length<d;q++){
+      var c=cand[q];
+      if(c.n2<1e-12) break;
+      var u=c.w.slice();
+      for(var pp=0;pp<out.length;pp++){
+        var dp=0; for(var m5=0;m5<n;m5++) dp+=out[pp][m5]*u[m5];
+        for(var m6=0;m6<n;m6++) u[m6]-=dp*out[pp][m6];
+      }
+      var un=0; for(var m7=0;m7<n;m7++) un+=u[m7]*u[m7];
+      if(un<1e-12) continue;
+      un=Math.sqrt(un);
+      var uv=[]; for(var m8=0;m8<n;m8++) uv.push(u[m8]/un);
+      out.push(uv);
+      /* CX6-1: label the ACCEPTED vector truthfully in the CELL frame.
+         The old code pushed the candidate's one-hot - correct ONLY when
+         the candidate is fully inside the subspace (n2~1). When it is a
+         partial projection (e.g. t02 (111) E: no pure crystal p lives in
+         the subspace), the one-hot labelled a MIXED orbital with a bare
+         crystal name, and skipped seeds (p_x parallel to an accepted
+         member) vanished from every label - 'two p_z, no p_x'. D_n2c maps
+         canonical->cell exactly as the fallback path below does, so pure
+         candidates still yield pure one-hot labels (pass-8 case intact). */
+      var e=[]; for(var m9=0;m9<n;m9++) e.push(0);
+      if(D_n2c){ for(var m9b=0;m9b<n;m9b++){ var sc=0; for(var m9c=0;m9c<n;m9c++) sc+=D_n2c[m9b][m9c]*uv[m9c]; e[m9b]=sc; } }
+      else { e[c.m]=1; }
+      cellOut.push(e);
+    }
+  }
+  for(var i2=0;i2<V.length && out.length<d;i2++){
+    var u2=V[i2].slice();
+    for(var p2=0;p2<out.length;p2++){
+      var dp2=0; for(var m10=0;m10<n;m10++) dp2+=out[p2][m10]*u2[m10];
+      for(var m11=0;m11<n;m11++) u2[m11]-=dp2*out[p2][m11];
+    }
+    var un2=0; for(var m12=0;m12<n;m12++) un2+=u2[m12]*u2[m12];
+    if(un2<1e-12) continue;
+    un2=Math.sqrt(un2);
+    var uv2=[]; for(var m13=0;m13<n;m13++) uv2.push(u2[m13]/un2);
+    out.push(uv2);
+    var cv=null;
+    if(D_n2c){
+      cv=[];
+      for(var m14=0;m14<n;m14++){ var s=0; for(var m15=0;m15<n;m15++) s+=D_n2c[m14][m15]*uv2[m15]; cv.push(s); }
+    }
+    cellOut.push(cv);
+  }
+  var fr=[];
+  for(var i3=0;i3<out.length;i3++) fr.push(PG_outOfPlaneFraction(out[i3], l, ncan));
+  return {vecs:out, fracs:fr, cellVecs:cellOut};
+}
+
 function PG_outOfPlaneFraction(v, l, n){
   /* How much of this SALC points along the plane normal, reported on a true
      0..1 scale.
@@ -5950,7 +7249,10 @@ function PG_salcVectors(G, cls, classes, ident, l, irrepName){
       P[a][b]+=re*Rm[a][b];
     }
   }
-  for(var a2=0;a2<n;a2++) for(var b2=0;b2<n;b2++) P[a2][b2]*=d/G.length;
+  /* CX-3: joint pair projector scale 2d/NG for complex rows -
+     consistent with CX-1 so vector spans match merged part dims. */
+  var cxx=false; for(var cji=0;cji<chi.length;cji++){ var cbx=PG_asC(chi[cji]); if(Math.abs(cbx[1])>1e-9){ cxx=true; break; } }
+  for(var a2=0;a2<n;a2++) for(var b2=0;b2<n;b2++) P[a2][b2]*=(cxx?(2*d/G.length):(d/G.length));
   /* eigenvectors of the (Hermitian, idempotent) projector */
   var sym=[];
   for(var i2=0;i2<n;i2++){ var rr=[]; for(var j2=0;j2<n;j2++) rr.push((P[i2][j2]+P[j2][i2])/2); sym.push(rr); }
@@ -5974,7 +7276,7 @@ function PG_salcVectors(G, cls, classes, ident, l, irrepName){
    COLUMNS.  We return the distinct Cartesian rotations generating the site
    point group. */
 function PG_siteGroupOps(ops, cell, frac, tol){
-  tol = tol || 1e-4;
+  tol = tol || FRAC_TOL;   /* site-fix test is the same fractional match as site/class identity */
   var A=[[cell[0][0],cell[1][0],cell[2][0]],
          [cell[0][1],cell[1][1],cell[2][1]],
          [cell[0][2],cell[1][2],cell[2][2]]];
@@ -6163,15 +7465,63 @@ function PG_canonicalRotation(G){
     for(var t=0;t<cands.length;t++) if(Math.abs(Math.abs(PG_dot(cands[t],a))-1)<1e-6) dup=true;
     if(!dup) cands.push(a);
   }
+  /* G2: pin the canonical z' to the PLANE NORMAL when the normal is one of
+     this group's principal axes (the slab case).  The canonical frame also
+     feeds the chips' out-of-plane % readout and the user's mental map of
+     x/y/z on the slab; on (110) of the embedded deck the old code picked a
+     principal axis that was NOT the normal, so the B2u chip drew along the
+     plane normal while reporting "in-plane".  With z' = n (a legitimate
+     principal axis of the same group), the out-of-plane SALC is always
+     canonical z and the in-plane ones x/y - matching the panel's own
+     labels and removing the last spurious 45-degree flip.  Irrep IDENTITY
+     is untouched: PG_identifyGroup's table permutation absorbs the axis
+     relabelling, and the character tables are unchanged.  */
+  if(typeof PLANE!=='undefined' && PLANE && PLANE.n && cands.length){
+    for(var qp=0;qp<cands.length;qp++){
+      if(Math.abs(Math.abs(PG_dot(cands[qp],PLANE.n))-1)<1e-6){ cands.unshift(cands.splice(qp,1)[0]); break; }
+    }
+  }
   var z=cands[0];
   var ref=null;
+  /* G1b: choose the in-plane canonical reference x' RANKED, not first-found.
+     History: the original code took the FIRST eligible mirror in CIF order;
+     on the (001)/(100) slabs of the embedded NaCl deck that was a sigma_d,
+     so canonical x' landed on a face DIAGONAL (x'~(0.707,0.707,0)) and every
+     in-plane SALC chip drew rotated 45 deg from the crystal axes - the
+     user's report.  A first pass preferred ANY axis-aligned mirror, but
+     first-found then pinned x' to the b axis on (001) and the chip labeled
+     p_x drew along crystal y.  Correct rule: among ALL eligible mirror
+     normals (never parallel to z'), prefer the AXIS-ALIGNED ones (sigma_v),
+     RANKED by closeness to the a axis first, then b, then c - so x' pins to
+     a when the group has it, and the labels p_x<->a, d_x2-y2<->a finally
+     agree with both the character-table convention AND the crystal.  Groups
+     whose eligible mirrors are all diagonal keep the first-eligible
+     behaviour; irrep identity is untouched - only the in-plane basis of the
+     canonical frame changes, and PG_identifyGroup's table permutation
+     absorbs the relabelling exactly as before. */
+  var _ab=[1,0,0], _bb=[0,1,0], _cb=[0,0,1];
+  if(typeof S!=='undefined' && S && S.struct && S.struct.cell){
+    var _A=S.struct.cell;
+    var _la=PG_len(_A[0])||1, _lb=PG_len(_A[1])||1, _lc=PG_len(_A[2])||1;
+    _ab=[_A[0][0]/_la,_A[0][1]/_la,_A[0][2]/_la];
+    _bb=[_A[1][0]/_lb,_A[1][1]/_lb,_A[1][2]/_lb];
+    _cb=[_A[2][0]/_lc,_A[2][1]/_lc,_A[2][2]/_lc];
+  }
+  var bestMirScore=-2, firstRef=null;
   for(var j2=0;j2<G.length;j2++){
     var M2=G[j2];
     if(PG_det(M2)<0 && PG_order(M2)===2 && Math.abs(PG_trace(M2)-1)<1e-6){
       var n2=PG_mirrorNormal(M2);
-      if(n2 && Math.abs(Math.abs(PG_dot(n2,z))-1)>1e-6){ ref=n2; break; }
+      if(n2 && Math.abs(Math.abs(PG_dot(n2,z))-1)>1e-6){
+        if(!firstRef) firstRef=n2;            /* first-eligible fallback */
+        if(Math.abs(n2[0])>1-1e-6 || Math.abs(n2[1])>1-1e-6 || Math.abs(n2[2])>1-1e-6){
+          var sc=100*Math.abs(PG_dot(n2,_ab))+10*Math.abs(PG_dot(n2,_bb))+Math.abs(PG_dot(n2,_cb));
+          if(sc>bestMirScore+1e-9){ bestMirScore=sc; ref=n2; }
+        }
+      }
     }
   }
+  if(!ref) ref=firstRef;
   if(!ref){
     for(var j3=0;j3<axes.length;j3++){
       if(Math.abs(Math.abs(PG_dot(axes[j3].ax,z))-1)>1e-6){ ref=axes[j3].ax; break; }
@@ -6200,34 +7550,170 @@ function PG_conjugateGroup(G,C){
    ============================================================================ */
 var SYM = {
   enabled: true,
-  cache: null,          /* {key, group, ident, site, ops} */
+  /* N1 (Phase 4): the site-group analysis and the manifold memo are now
+     CLASS-KEYED maps (bounded LRU) instead of single slots, so several site
+     classes - e.g. Na#1 (48-op) and Na#2 (16-op) - can hold analyses at
+     once for the mixed-overlay view.  SYM.siteSel is the PICKED class
+     (a classPartition label like 'Na#1'); null = follow the anchor. */
+  cache: null,            /* LAST analysis (compat reads: badge) */
+  cacheByClass: {},       /* classLabel -> analysis (LRU, UI badge/picker) */
+  cacheByKey: {},         /* full analysis key -> analysis (LRU, memo) */
+  keyOrder: [],           /* recency list for cacheByKey */
+  KEYCACHE_MAX: 12,
   lastKey: null,
-  manCache: null,       /* {manifold} memo for symManifold() - perf P0-1 */
-  manCacheKey: null
+  manCache: null,         /* compat last manifold */
+  manCacheKey: null,
+  manCacheByKey: {},      /* key -> manifold (LRU) */
+  manKeyOrder: [],        /* recency list */
+  MANCACHE_MAX: 12,
+  siteSel: null
 };
+var _SYM_CLASS_ORDER=[]; var SYM_CACHE_MAX=8;
+function _symCacheSet(k,A){
+  var i=_SYM_CLASS_ORDER.indexOf(k);
+  if(i>=0) _SYM_CLASS_ORDER.splice(i,1);
+  _SYM_CLASS_ORDER.push(k);
+  SYM.cacheByClass[k]=A;
+  SYM.cache=A;
+  while(_SYM_CLASS_ORDER.length>SYM_CACHE_MAX){ delete SYM.cacheByClass[_SYM_CLASS_ORDER.shift()]; }
+}
+/* Fix: the analysis key encodes EVERYTHING the result depends on
+   (structure rev + ops hash + site fraction + mode + plane normal), so the
+   same key can never alias a different site or structure.  symAnalyze()
+   already looked up SYM.cacheByKey[key], but nothing ever populated it
+   (the class map below is keyed by siteCls for the badge/picker, not by
+   key), so that branch was dead and only the single-slot SYM.cache could
+   hit.  This restores the intended bounded key cache: mixed-overlay
+   redraws that re-ask about several classes per frame now hit it instead
+   of re-running the full PG algebra. */
+function _symKeySet(k,A){
+  var i=SYM.keyOrder.indexOf(k);
+  if(i>=0) SYM.keyOrder.splice(i,1);
+  SYM.keyOrder.push(k);
+  SYM.cacheByKey[k]=A;
+  while(SYM.keyOrder.length>SYM.KEYCACHE_MAX){ delete SYM.cacheByKey[SYM.keyOrder.shift()]; }
+}
+function _symManSet(k,M){
+  var i=SYM.manKeyOrder.indexOf(k);
+  if(i>=0) SYM.manKeyOrder.splice(i,1);
+  SYM.manKeyOrder.push(k);
+  SYM.manCacheByKey[k]=M;
+  SYM.manCache=M;
+  while(SYM.manKeyOrder.length>SYM.MANCACHE_MAX){ delete SYM.manCacheByKey[SYM.manKeyOrder.shift()]; }
+}
 
 /* Build the analysis for the current structure + anchored atom.  Returns null if
    there is nothing to analyse. */
-function symAnalyze(){
+/* N2b: per-class helpers (Phase 4).
+   - symClassList(): unique class labels of the loaded structure.
+   - symFocusCls(): the class the strip badge + dropdowns follow (the
+     picker pick, else the ANCHOR's own class) - never moves the plane.
+   - classSeedSite(cls): {sym, cart} of the class's SEED representative;
+     the per-class analysis + transport REFERENCE site.                 */
+function symClassList(){
+  var part=(S.struct? classPartition(S.struct):null);
+  if(!part) return [];
+  var seen={}, out=[];
+  for(var i=0;i<part.map.length;i++){
+    var c=part.map[i].cls;
+    if(!seen[c]){ seen[c]=1; out.push(c); }
+  }
+  return out;
+}
+function symFocusCls(){
+  if(SYM.siteSel) return SYM.siteSel;
+  if(PLANE.anchor && S.struct) return anchorClassId(S.struct, PLANE.anchor);
+  return null;
+}
+function classSeedSite(cls){
+  var part=(S.struct? classPartition(S.struct):null);
+  if(!part) return null;
+  for(var i=0;i<part.map.length;i++){
+    if(part.map[i].cls===cls){
+      var at=S.struct.atoms[part.map[i].seed];
+      if(at && at.f) return {sym:at.sym, cart:fracToCart(at.f.slice())};
+    }
+  }
+  return null;
+}
+
+/* N1b: the analysis site.  The site-class PICKER (Phase 4) selects which
+   class the symmetry strip analyses: the PICKED class -> that class's SEED
+   representative from classPartition, else the PLANE ANCHOR (v1.2.8 keeps). */
+function analysisSiteOf(explicitSite){
+  if(explicitSite && explicitSite.cart) return explicitSite;
   if(!S.struct || !PLANE.anchor) return null;
+  if(SYM.siteSel){
+    var part=classPartition(S.struct);
+    if(part){
+      for(var i=0;i<part.map.length;i++){
+        if(part.map[i].cls===SYM.siteSel){
+          var seedIdx=part.map[i].seed;
+          var at=S.struct.atoms[seedIdx];
+          if(at && at.f) return {sym:at.sym, cart:fracToCart(at.f.slice())};
+        }
+      }
+    }
+    /* unresolvable pick -> fall back to the anchor */
+  }
+  return {sym:PLANE.anchor.sym, cart:PLANE.anchor.cart.slice()};
+}
+function symAnalyze(explicitSite){
+  var _anSite=analysisSiteOf(explicitSite);
+  if(!S.struct || !_anSite) return null;
   var st=S.struct;
   /* need the operations; if the format didn't provide them, fall back to P1 */
   var ops=st.symops;
-  if(!ops || !ops.length) ops=[{M:[[1,0,0],[0,1,0],[0,0,1]], c:[0,0,0]}];
+  /* J1: PROVENANCE.  If the loaded structure provides NO symmetry operations
+     (pw.x decks / MP JSON have none), the identity-only group below is an
+     ASSUMPTION (P1), not a statement about the crystal.  The analysis now
+     carries symopsAssumed/symopsDeclared so the UI can label the C1 badge as
+     assumed instead of presenting it as a symmetry result. */
+  var symopsAssumed=!(ops && ops.length);
+  var symopsDeclared=!symopsAssumed && !(st && st.symopsAssumed);
+  if(symopsAssumed) ops=[{M:[[1,0,0],[0,1,0],[0,0,1]], c:[0,0,0]}];
   /* the anchor stores a Cartesian position; get its fractional coordinates */
   var Ainv=PG_inv3([[st.cell[0][0],st.cell[1][0],st.cell[2][0]],
                     [st.cell[0][1],st.cell[1][1],st.cell[2][1]],
                     [st.cell[0][2],st.cell[1][2],st.cell[2][2]]]);
   if(!Ainv) return null;
-  var c=PLANE.anchor.cart;
+  var c=_anSite.cart;
   var f=[Ainv[0][0]*c[0]+Ainv[0][1]*c[1]+Ainv[0][2]*c[2],
          Ainv[1][0]*c[0]+Ainv[1][1]*c[1]+Ainv[1][2]*c[2],
          Ainv[2][0]*c[0]+Ainv[2][1]*c[1]+Ainv[2][2]*c[2]];
   var mode=(typeof S.symMode==='string')? S.symMode : 'slab';
   var nrm=(PLANE && PLANE.n)? PLANE.n : [0,0,1];
-  var key=PG_key(ops[0].M)+'|'+Math.round(f[0]*1e4)+','+Math.round(f[1]*1e4)+','+Math.round(f[2]*1e4)
-          +'|'+mode+'|'+nrm[0].toFixed(4)+','+nrm[1].toFixed(4)+','+nrm[2].toFixed(4);
-  if(SYM.cache && SYM.cache.key===key) return SYM.cache;
+  /* K1: ROBUST ANALYSIS KEY - every parameter that changes the computed
+     representation, led by the structure revision so the key is
+     namespaced per load:
+         rev | opsHash | site fraction | mode | plane normal
+     - rev (S_structRev, stamped by loadStructure): the structure
+       identity as a whole - lattice, sites and the symmetry table are
+       all behind this number, and future parser edits automatically
+       invalidate via the bump (no dependency re-enumeration needed).
+     - opsHash (K2): the COMPLETE canonicalised symmetry-operation list.
+       Fixes the old key, which hashed ONLY ops[0].M - the identity
+       operation in nearly every CIF - so two structures with different
+       symmetry aliased whenever site fraction / mode / normal matched,
+       making the irrep chips serve one structure's group to the other.
+     - site fraction, quantised at the FRAC_TOL grid: selects which ops
+       fix the site.
+     - mode ('slab'/'surface'/'full'): selects PG_planeAdaptedOps output.
+     - plane normal, 1e-4 (toFixed(4)): enters the plane-adapted subgroup
+       and the canonical frame used for the irrep labels.
+     PLANE.u/v/rot and the anchored ELEMENT are deliberately ABSENT:
+     symAnalyze consumes only n (not u/v/rot), and the element lives in
+     the downstream symManifold memo, which chains on this key.  The key
+     is built once per anchor/mode/normal change - never in a redraw
+     loop - so one pass over the ops list is irrelevant to frame time. */
+  var _fq=1/FRAC_TOL;   /* fraction grid = FRAC_TOL (kept in lockstep with site matching) */
+  var key = String(S_structRev)
+          + '|' + symOpsHash(ops)
+          + '|' + Math.round(f[0]*_fq) + ',' + Math.round(f[1]*_fq) + ',' + Math.round(f[2]*_fq)
+          + '|' + mode
+          + '|' + nrm[0].toFixed(4) + ',' + nrm[1].toFixed(4) + ',' + nrm[2].toFixed(4);
+  if(SYM.cacheByKey && SYM.cacheByKey[key]) return SYM.cacheByKey[key];
+  if(SYM.cache && SYM.cache.key===key) return SYM.cache;   /* keep: populates cacheByKey below on miss */
   /* site group */
   var sg=PG_siteGroupOps(ops, st.cell, f);
   if(!sg || !sg.length) return null;
@@ -6247,10 +7733,42 @@ function symAnalyze(){
   var Gc=PG_conjugateGroup(G,C);
   var ccc=PG_conjugacyClasses(Gc);
   var identC=PG_identifyGroup(Gc,ccc.cls,ccc.classes);
+  /* CX7-1: CANONICAL-FRAME FALLBACK.  Awkward canonical frames (e.g. a Td
+     full-mode site whose max-fold axes are the [111] body diagonals)
+     conjugate ops onto irrational entries that PG_snap's 1e-7 residual
+     grid quantizes UNEQUALLY across conjugate members - orders read 0,
+     runtime sigs fragment, identC nulls.  Downstream then treated the
+     cell-frame V (built via useG=an.G) as canonical and re-applied C -
+     a DOUBLE rotation that drew chips at phantom 45 deg (user report,
+     t01 (001) full site).  When the canonical attempt fails but the
+     CELL-frame identify succeeded, adopt the CELL frame AS canonical
+     (C = I): every downstream frame consumer (draw conversion, crystal-
+     axis candidate sort, out-of-plane %, labels) then agrees, and the
+     chips are the true crystal-frame functions. */
+  if(!identC && ident){
+    C=PG_eye(); Gc=PG_conjugateGroup(G,C);
+    ccc=PG_conjugacyClasses(Gc);
+    identC=PG_identifyGroup(Gc,ccc.cls,ccc.classes);
+  }
   var res={key:key, G:G, cls:cc.cls, classes:cc.classes, ident:ident,
            Gc:Gc, clsC:ccc.cls, classesC:ccc.classes, identC:identC,
-           C:C, frac:f, nOps:sg.length, nOpsFull:sgFull.length, mode:mode, n:nrm};
+           C:C, frac:f, nOps:sg.length, nOpsFull:sgFull.length, mode:mode, n:nrm,
+           symopsAssumed:symopsAssumed, symopsDeclared:symopsDeclared};   /* J1 */
+  /* N1e: which SITE CLASS this analysis belongs to (badge + picker UI). */
+  res.siteCls=(function(){
+    var part=(S.struct? classPartition(S.struct):null);
+    if(!part) return null;
+    for(var i=0;i<part.map.length;i++){
+      var at=S.struct.atoms[part.map[i].seed];
+      if(!at) continue;
+      function w(x){ x-=Math.round(x); return Math.abs(x); }
+      if(w(f[0]-at.f[0])<FRAC_TOL && w(f[1]-at.f[1])<FRAC_TOL && w(f[2]-at.f[2])<FRAC_TOL){ return part.map[i].cls; }
+    }
+    return null;
+  })();
   SYM.cache=res;
+  _symKeySet(key, res);
+  if(res.siteCls) _symCacheSet(res.siteCls, res);
   return res;
 }
 
@@ -6270,8 +7788,8 @@ function symCanonicalNormal(an){
            C[2][0]*n[0]+C[2][1]*n[1]+C[2][2]*n[2] ];
 }
 
-function symManifold(el, l){
-  var an=symAnalyze();
+function symManifold(el, l, site){
+  var an=symAnalyze(site);
   if(!an) return null;
   /* ------------------------------------------------------------------
      MEMOISATION (performance fix P0-1).
@@ -6286,7 +7804,8 @@ function symManifold(el, l){
      so a new plane can never hit a stale entry.  We keep a single
      last-value memo: the hot path only ever asks about the anchored
      element and one manifold at a time.                                    */
-  var mkey=an.key+'|'+el+'|'+l;
+  var mkey=an.key+'|'+el+'|'+l+'|'+((S.symAlign===false)?'xtal':'align');
+  if(SYM.manCacheByKey && SYM.manCacheByKey[mkey]) return SYM.manCacheByKey[mkey];
   if(SYM.manCacheKey===mkey && SYM.manCache) return SYM.manCache;
   var useIdent = an.identC || an.ident;
   var useG = an.identC ? an.Gc : an.G;
@@ -6313,18 +7832,60 @@ function symManifold(el, l){
        (V.length>=2); for a 1-D irrep the SALC is pinned by symmetry and is left
        alone - it simply carries its (possibly oblique) out-of-plane fraction as
        a label. */
+    /* I1 (supersedes H1's raw-eigenbasis semantics): the "align" checkbox
+       (S.symAlign) selects the basis of every DEGENERATE irrep (dim >= 2),
+       whose basis is not pinned by symmetry:
+         CHECKED   = plane-resolved (as before): rotate the SALC basis so
+                     one vector is maximally OUT-OF-PLANE and the rest
+                     maximally IN-PLANE relative to the anchored (hkl)
+                     slab (PG_alignToPlane).
+         UNCHECKED = CRYSTAL-resolved (PG_alignToCrystalAxes): the CELL-frame
+                     realSH basis functions (p_z/p_x/p_y along the crystal
+                     c/a/b directions, d_..., f_...) are projected onto the
+                     irrep subspace and the strongest projections form the
+                     basis - so each SALC is a PURE crystallographic orbital
+                     wherever the subspace allows, mixed only where the
+                     symmetry forces it.  This REPLACES the old unchecked
+                     behaviour (the raw Jacobi eigenbasis: deterministic
+                     but never a documented convention).
+       For 1-D irreps the SALC is symmetry-pinned and neither branch runs.
+       V is CANONICAL-frame here by construction; both aligners consume the
+       canonical normal.  F1/F2 convert to the cell frame only at the draw
+       boundary (symActiveSALC). */
+    var partCellVecs=null;
     if(V.length>=2){
-      var ncanA=symCanonicalNormal(an);
-      var alA=PG_alignToPlane(V, l, ncanA);
-      V=alA.vecs; fracs=alA.fracs;
+      if(S.symAlign===false){
+        var alc=PG_alignToCrystalAxes(V, l, an);
+        V=alc.vecs; fracs=alc.fracs;
+        partCellVecs=alc.cellVecs;
+      } else {
+        var ncanA=symCanonicalNormal(an);
+        var alA=PG_alignToPlane(V, l, ncanA);
+        V=alA.vecs; fracs=alA.fracs;
+      }
     } else if(V.length===1){
       fracs=[PG_outOfPlaneFraction(V[0], l, symCanonicalNormal(an))];
+      /* CX9-1: crystal-frame names for 1-D parts too.  A mult x dim = 1
+         subspace is a single symmetry-pinned ray, so the DRAWN vector
+         is identical in both align states - but unchecked (crystal)
+         mode should NAME it by its true crystal-frame content (e.g.
+         B2u at a (101) slab is p_z+p_x), not by its canonical-frame
+         one-hot ("p_z").  Without this, oblique-plane 1-D chips
+         carried aligned-frame names over crystal-content glyphs -
+         the last label/frame mismatch.  Degenerate parts already do
+         this via PG_alignToCrystalAxes; this routes the one 1-D
+         vector through the same symCoefsToCellFrame the draw path
+         uses, so label and glyph always agree in crystal mode. */
+      if(S.symAlign===false){
+        partCellVecs=[symCoefsToCellFrame(V[0], l, an)];
+      }
     }
     parts.push({irrep:p.name, dim:p.dim, mult:Math.round(p.mult),
-                coeffs:V, basis:l, fracs:fracs});
+                coeffs:V, basis:l, fracs:fracs, cellVecs:partCellVecs});
   }
   var mres={ident:useIdent, chiG:dec.chiG, parts:parts, l:l, site:an};
-  SYM.manCacheKey=mkey; SYM.manCache=mres;   /* memoise (P0-1) */
+  SYM.manCacheKey=mkey; SYM.manCache=mres;
+  _symManSet(mkey,mres);
   return mres;
 }
 
@@ -6333,6 +7894,54 @@ function symTotalDim(mf){
   if(!mf) return 0;
   var t=0; for(var i=0;i<mf.parts.length;i++) t+=mf.parts[i].coeffs.length;
   return t;
+}
+
+/* ==== F1: canonical -> cell frame transform for SALC coefficients ==========
+   The SALC coefficient vectors from symManifold() are expressed in the
+   CANONICAL frame (rows of an.C are the canonical axes in cell coords);
+   the chips' p_x/p_z component names are conventional in that frame.
+   The consumers, however, evaluate the angular function against the
+   CRYSTAL frame: the 3D lobe mesh (makeSALCLobeMesh -> realSH / rotYTo)
+   and the 2D line integral (orbLineIntegralSALC -> realSH).  For non-axial
+   planes the two frames differ (for NaCl (101) the D2h canonical frame is
+   rotated 45 deg about y relative to the cell), which silently drew every
+   SALC axis along canonical instead of crystal directions: B1u, the true
+   out-of-plane SALC (|axis.n| = 1), rendered at 45 deg to the plane, and
+   the 2D glyph developed a spurious signed signal instead of the honest
+   plain disc.  Transform: a direction with canonical components q has
+   cell components (q.e1,q.e2,q.e3) = C.q  (C orthogonal), i.e. the
+   rotation R = C^T; the (2l+1) coefficient vector transforms with the
+   l-shell representation D = PG_repMatrix(l, C^T):
+        c_cell[m] = SUM_m' D[m][m'] * c_canon[m']
+   Cache: keyed on (analysis key, l).  The analysis key carries the
+   structure revision, ops hash, anchor fraction, mode and normal, so a
+   transform can never survive a change of frame; the explicit clears in
+   the anchor/hkl/load/mode/chip handlers (search F5) are belt-and-braces. */
+var SYM_FRAME_TF_CACHE={};       /* key -> D.  N1g: bounded map. */
+var _symTfOrder=[]; var SYM_TF_MAX=12;
+function _symTfSet(k,D){
+  var i=_symTfOrder.indexOf(k);
+  if(i>=0) _symTfOrder.splice(i,1);
+  _symTfOrder.push(k);
+  SYM_FRAME_TF_CACHE[k]=D;
+  while(_symTfOrder.length>SYM_TF_MAX) delete SYM_FRAME_TF_CACHE[_symTfOrder.shift()];
+}
+function symCoefsToCellFrame(coefs, l, an){
+  an=an||symAnalyze();
+  if(!an || !an.C) return coefs;
+  var fkc=an.key+'|'+l;
+  var D=SYM_FRAME_TF_CACHE[fkc];
+  if(!D){
+    D=PG_repMatrix(l, PG_mT(an.C));
+    _symTfSet(fkc,D);
+  }
+  var n=2*l+1, out=new Array(n);
+  for(var r=0;r<n;r++){
+    var s=0;
+    for(var m=0;m<n;m++) s+= (coefs[m]||0) * D[r][m];
+    out[r]=s;
+  }
+  return out;
 }
 
 /* evaluate a SALC (linear combination of realSH) at a Cartesian direction,
@@ -6421,16 +8030,26 @@ function symOrbitalLabel(coefs, l){
   var equal=true;
   for(var t=1;t<terms.length;t++) if(Math.abs(Math.abs(terms[t].c)-maxAbs)>1e-6) equal=false;
   if(equal){
-    var s=terms[0].name;
+    /* CX9-2: print the LEADING term's sign too.  The old 's=terms[0].name'
+       dropped it, which was invisible while this path only saw canonical
+       one-hots (leading coefficient conventionally positive), but CX9-1
+       routes true CELL-frame vectors here: (p_z-p_x)/sqrt2 with a float-
+       noise p_x-first sort printed 'p_x+p_z' - the label of a DIFFERENT,
+       orthogonal function.  Signed-leading keeps label == glyph. */
+    var s=(terms[0].c<0?'\u2212':'')+terms[0].name;
     for(var t2=1;t2<terms.length;t2++) s+=(terms[t2].c<0?'\u2212':'+')+terms[t2].name;
     return s;
   }
-  var out=[];
+  /* CX6-2: weighted multi-term labels join with SIGNED separators
+     ('+') / ('−') per term; the old out.join('+') printed
+     '0.82p_z+−0.41p_x' - a +− artifact for every negative term. */
+  var out='';
   for(var t3=0;t3<terms.length;t3++){
     var w=Math.abs(terms[t3].c).toFixed(2);
-    out.push((terms[t3].c<0?'\u2212':'')+w+terms[t3].name);
+    if(t3===0){ out=(terms[t3].c<0?'−':'')+w+terms[t3].name; }
+    else { out+=(terms[t3].c<0?'−':'+')+w+terms[t3].name; }
   }
-  return out.join('+');
+  return out;
 }
 
 function buildSymPanel(){
@@ -6475,82 +8094,185 @@ function buildSymPanel(){
     var ident=an.identC||an.ident;
     var modeLbl=(an.mode==='full')?'3D site':(an.mode==='surface'?'surface':'plane');
     if(badgeSite){
-      var nm=modeLbl+': '+(ident?ident.name:'?');
-      if(an.mode!=='full' && an.nOpsFull && an.nOpsFull!==an.nOps)
+      var nm=modeLbl+': '+((ident)?ident.name:('group not in table ('+an.nOps+((an.nOpsFull&&an.nOpsFull!==an.nOps)?('/'+an.nOpsFull):'')+' ops)'));   /* CX5-2: honest fallback - all 32 crystallographic groups now have tables; */   /* a null ident means the ops are not a crystallographic point group. */
+      if(ident && an.mode!=='full' && an.nOpsFull && an.nOpsFull!==an.nOps)
         nm+=' ('+an.nOps+'/'+an.nOpsFull+')';
+      nm+=((an.symopsAssumed)?' (assumed P1)':'');   /* J3: honest badge */
+      if(an.siteCls) nm+=' @'+an.siteCls;           /* N2h: which class the badge describes */
       badgeSite.textContent=nm;
     }
     var modeName=(an.mode==='full')?'full 3D site group'
                 :(an.mode==='surface'?'surface (half-space) group':'plane-preserving (slab) group');
+    var provTag=(an.symopsAssumed)
+      ? '<div class="symline symtag">no symmetry operations declared: the site group \u201CC1\u201D is an ASSUMPTION (P1) - irrep / SALC results are not meaningful</div>'
+      : '';
     siteDetail='<div class="symline"><b>Site symmetry</b> &nbsp;<span class="symbadge">'
-      +(ident?esc(ident.name):'?')+'</span> <span class="symtag">'+modeName
-      +' \u00B7 '+an.nOps+' op'+(an.nOps===1?'':'s')+'</span></div>';
+      +(ident?esc(ident.name):'group not in table')+'</span> <span class="symtag">'+modeName
+      +' \u00B7 '+an.nOps+' op'+(an.nOps===1?'':'s')+'</span></div>'+provTag;
   }
   if(badgeSite && !an) badgeSite.textContent='site: \u2014';
 
-  /* ---------- manifold section: only once an orbital is chosen ---------- */
-  var mf=symSelectedManifold();
-  var manHtml='', chipHtml='';
-  if(!mf){
+  /* ---------- N2e (Phase 4): COLLAPSIBLE PER-CLASS CHIP SECTIONS ----------
+     Every site class gets its own <details> section (summary = class label
+     + that class's group); chips of several classes can be selected at
+     once -> mixed overlay (the draw paths read them per class in N3).
+     The FOCUS class (picker, else the anchor's) opens by default.        */
+  var _focus=symFocusCls();
+  var manHtml='', chipHtml='';   /* N-fix1: filled by the FOCUS class section below - never left blank by the picker */
+  var _classList=symClassList();
+  /* O1 (polish): how many SLAB atoms does each class actually have right
+     now?  A section can list valid irreps while its class has ZERO atoms
+     inside the drawn slab (a (001) slab at the z=0 layer contains no
+     half-height atoms), and selecting chips there changes nothing on
+     screen - indistinguishable from a dead control.  We count PLANE.pts
+     per class and mark such sections '0 atoms in plane' (dimmed card, no
+     open default) so the honest reason is visible at a glance.          */
+  var _inPlaneCount={};
+  if(PLANE && PLANE.pts){
+    for(var _pi=0; _pi<PLANE.pts.length; _pi++){
+      var _pc=PLANE.pts[_pi].cls;
+      if(_pc) _inPlaneCount[_pc]=(_inPlaneCount[_pc]||0)+1;
+    }
+  }
+  if(!_classList.length){
     manHtml='<div class="symline symtag">Tick an orbital to see how this manifold '
            +'splits into irreps.</div>';
   } else {
-    var man=symManifold(mf.el,mf.l);
-    if(!man){
-      manHtml='<div class="symline symtag">site group too large to analyse here</div>';
-    } else {
-      var lnames=['s','p','d','f'];
-      manHtml+='<div class="symline">'+lnames[mf.l]+'-manifold of '+esc(mf.el)
-              +' under this group &nbsp;\u2192</div>';
-      var parts=[];
-      for(var i=0;i<man.parts.length;i++){
-        var p=man.parts[i];
-        parts.push(p.irrep+'&nbsp;<span class="symtag">('+p.mult+'\u00D7'+(p.dim>1?p.dim+'D':'')+')</span>');
-      }
-      manHtml+='<div class="symdecomp">'+(parts.length?parts.join(' &nbsp;\u2295&nbsp; '):'\u2014')+'</div>';
-      /* chips: both in the body and inline in the head (one row, compact) */
-      var selKey=(mf.el+'|'+mf.l);
-      var curSel=S.symSel[selKey];
-      var chips='';
-      for(var j=0;j<man.parts.length;j++){
-        var pt=man.parts[j];
-        var nv=pt.coeffs.length;
-        var on=(curSel && curSel.irrep===pt.irrep);
-        /* name the orbital(s) this SALC is made of, so B1 and B2 stay
-           distinguishable even when their SHAPES look alike (nearly
-           tetragonal cell).  The vector shown is the currently selected one
-           if this chip is active, else the first. */
-        var vi=(on && curSel)?(curSel.vecIndex||0):0;
-        var orbName=symOrbitalLabel(pt.coeffs[Math.min(vi,pt.coeffs.length-1)], mf.l);
-        var label=pt.irrep+(orbName?(' · '+orbName):'')
-                  +(nv>1?(' ['+((on?(curSel.vecIndex+1):1))+'/'+nv+']'):'');
-        chips+='<span class="symchip'+(on?' on':'')+'" data-symirrep="'+esc(pt.irrep)+'" title="'
-             +(nv>1?('Click to cycle through the '+nv+' SALCs of '+pt.irrep):'Click to draw this SALC')
-             +(orbName?('  ('+orbName+')'):'')
-             +'">'+esc(label)+'</span>';
-      }
-      if(curSel) chips+='<span class="symchip dim" data-symclear="1" title="Stop drawing SALCs and show the plain orbitals">clear</span>';
-      chipHtml=chips;
-      var tot=symTotalDim(man);
-      manHtml+='<div class="symirrep">'+chips+'</div>';
-      manHtml+='<div class="symline symtag">'+tot+' SALC'+(tot===1?'':'s')+' span the '+lnames[mf.l]
-              +'-manifold ('+(2*mf.l+1)+' real orbitals).</div>';
-      /* geometry annotation: how much of each SALC points out of the plane.
-         Oblique values are expected for 1-D irreps, which cannot be rotated. */
-      var geo=[];
-      for(var gi=0;gi<man.parts.length;gi++){
-        var gp=man.parts[gi];
-        if(!gp.fracs) continue;
-        for(var gk=0;gk<gp.fracs.length;gk++){
-          var f=gp.fracs[gk];
-          var tag=(f>0.85?'out-of-plane':(f<0.15?'in-plane':Math.round(f*100)+'% out-of-plane'));
-          geo.push('<span class="symtag">'+esc(gp.irrep)+(gp.fracs.length>1?(' '+(gk+1)):'')+': '+tag+'</span>');
+    var lnames4=['s','p','d','f'];
+    for(var ci2=0; ci2<_classList.length; ci2++){
+      var _cls=_classList[ci2];
+      var _el=_cls.split('#')[0];
+      var _site=classSeedSite(_cls);
+      var _anC=null;
+      try{ _anC=symAnalyze(_site); }catch(e){}
+      var _grp=(_anC && _anC.identC)? _anC.identC.name : ((_anC && _anC.ident)? _anC.ident.name : ((_anC)?('not in table ('+_anC.nOps+( _anC.nOpsFull?('/'+_anC.nOpsFull):'')+' ops)'):'?'));
+      var _sel=S.orbSel && S.orbSel[_el];
+      /* O1b: an empty-in-slab class is DIMMED and never the auto-opened
+         one; the summary carries the count tag. */
+      var _nInPlane=(_inPlaneCount[_cls]||0);
+      var _emptyInPlane=(_nInPlane===0);
+      var _open=((_cls===_focus) && !_emptyInPlane)?' open':'';
+      var sec='<details class="symsec'+(_emptyInPlane?' symsec-empty':'')+'"'+_open+'>'
+        +'<summary>'+esc(_cls)+' &nbsp;<span class="symtag">'+esc(_grp)+'</span>'
+        +(_emptyInPlane
+           ? ' &nbsp;<span class="symtag symsectag-empty">0 atoms in plane</span>'
+           : ' &nbsp;<span class="symtag">('+_nInPlane+' in plane)</span>')
+        +'</summary>';
+      if(!_sel){
+        sec+='<div class="symline symtag">tick a '+esc(_el)+' orbital in the Orbitals per element row to see its irreps</div>';
+      } else {
+        var man=null;
+        try{ man=symManifold(_el,_sel.l,_site); }catch(e){}
+        /* CX10-2: conditional, quiet 'align has no effect' note.  The
+           align checkbox only re-orients parts with >=2 functions
+           (degenerate pair or repeated 1-D irrep); when EVERY part of
+           THIS class's manifold is single-function the box cannot do
+           anything - say so in the checkbox's own tooltip (no layout
+           change, appears only when true). */
+        if(_cls===_focus && man && man.parts.length){
+          var _ali=$('symAlign');
+          if(_ali){
+            var _allPinned=true;
+            for(var pc10=0; pc10<man.parts.length; pc10++){
+              if(man.parts[pc10].coeffs.length>=2){ _allPinned=false; break; }
+            }
+            var _baseT='Rotate the basis INSIDE each degenerate irrep so that one SALC is as out-of-plane as possible and the rest lie in the plane. Does not change the irreps, only their basis. One-dimensional irreps are untouched (they are pinned by symmetry).';
+            _ali.title=(_allPinned?(_baseT+' All irreps of this manifold are single-function - align has no effect here.'):_baseT);
+          }
+        }
+        if(_emptyInPlane){
+          /* O1c: the honest reason, not silence: the chips still work, but
+             no atom of this class lies in the current slab, so a selection
+             cannot change the picture.  Suggest the two fixes.          */
+          sec+='<div class="symline symtag">no atom of this site class lies in the current slab &middot; re-anchor on one of its atoms, or raise the thickness, or pick another plane</div>';
+        }
+        if(!man || !man.parts.length){
+          sec+='<div class="symline symtag">site group too small to analyse here</div>';
+        } else {
+          sec+='<div class="symline">'+lnames4[_sel.l]+'-manifold of '+esc(_el)+' at '+esc(_cls)+' &nbsp;\u2192</div>';
+          var parts=[];
+          for(var pi=0;pi<man.parts.length;pi++){ 
+            var p2=man.parts[pi];
+            parts.push(p2.irrep+'&nbsp;<span class="symtag">('+p2.mult+'\u00D7'+(p2.dim>1?p2.dim+'D':'')+')</span>');
+          }
+          sec+='<div class="symdecomp">'+(parts.length?parts.join(' &nbsp;\u2295&nbsp; '):'\u2014')+'</div>';
+          var selKey2=(_cls+'|'+_sel.l);
+          var curSel=S.symSel[selKey2];
+          var chips='';
+          for(var pj=0;pj<man.parts.length;pj++){
+            var pt=man.parts[pj];
+            var nv=pt.coeffs.length;
+            var on=(curSel && curSel.irrep===pt.irrep);
+            var vi=(on && curSel)?(curSel.vecIndex||0):0;
+            var viC=Math.min(vi,pt.coeffs.length-1);
+            var _cLab=(pt.cellVecs && pt.cellVecs[viC])? pt.cellVecs[viC] : pt.coeffs[viC];
+            var orbName=symOrbitalLabel(_cLab, _sel.l);
+            var label=pt.irrep+(orbName?(' - '+orbName):'')
+                      +(nv>1?(' ['+((on?(curSel.vecIndex+1):1))+'/'+nv+']'):'');
+            chips+='<span class="symchip'+(on?' on':'')+'" data-symclass="'+esc(_cls)+'" data-symirrep="'+esc(pt.irrep)+'" title="'
+                 +(nv>1?('Click to cycle through the '+nv+' SALCs of '+pt.irrep+' (class '+_cls+')'):('Click to draw this SALC (class '+_cls+')'))
+                 +(orbName?('  ('+orbName+')'):'')
+                 +'">'+esc(label)+'</span>';
+          }
+          if(curSel) chips+='<span class="symchip dim" data-symclear="'+esc(_cls)+'" title="Stop drawing SALCs of class '+esc(_cls)+'">clear</span>';
+          if(_focus===_cls) chipHtml=chips;   /* N-fix1: head strip ALWAYS mirrors the focus class - picker or anchor (v1.2.9 shipped a siteSel===null guard here, which BLANKED the one-line chips whenever a class was picked; picking Na#2 must populate them, not empty them) */
+          sec+='<div class="symirrep">'+chips+'</div>';
+          var tot=symTotalDim(man);
+          sec+='<div class="symline symtag">'+tot+' SALC'+(tot===1?'':'s')+' span the '+lnames4[_sel.l]
+              +'-manifold ('+(2*_sel.l+1)+' real orbitals).</div>';
+          var geo=[];
+          for(var gi=0;gi<man.parts.length;gi++){
+            var gp=man.parts[gi];
+            if(!gp.fracs) continue;
+            for(var gk=0;gk<gp.fracs.length;gk++){
+              var f2=gp.fracs[gk];
+              var tag=(f2>0.85?'out-of-plane':(f2<0.15?'in-plane':Math.round(f2*100)+'% out-of-plane'));
+              geo.push('<span class="symtag">'+esc(gp.irrep)+(gp.fracs.length>1?(' '+(gk+1)):'')+': '+tag+'</span>');
+            }
+          }
+          if(geo.length) sec+='<div class="symline" style="line-height:1.8">'+geo.join(' &nbsp;\u00B7&nbsp; ')+'</div>';
         }
       }
-      if(geo.length) manHtml+='<div class="symline" style="line-height:1.8">'+geo.join(' &nbsp;\u00B7&nbsp; ')+'</div>';
+      manHtml+=sec+'</details>';
     }
   }
+  /* CX10-1: display-modes help - COLLAPSED by default (non-intrusive), one
+     click to open, reuses the existing symline styling.  This is the
+     three-state contract verified in the 2.2.24 session: symmetry off =
+     identical crystallographic orbitals on every atom; symmetry on +
+     align unchecked = each irrep shown in its crystal-function content
+     (pure function where symmetry allows, labeled mixture otherwise);
+     align checked = plane-resolved basis within re-orientable parts.
+     Single-function parts are symmetry-pinned both ways. */
+  manHtml+=('<details class="symline" style="margin-top:8px">'
+    +'<summary style="cursor:pointer;opacity:.75">display modes</summary>'
+    +'<div class="symline" style="opacity:.8">'
+    +'<b>symmetry off</b>: all atoms of the element show the same crystallographic orbital '
+    +'(p_z = crystal c axis, d_xy = between a and b). No irrep meaning.'
+    +'</div>'
+    +'<div class="symline" style="opacity:.8">'
+    +'<b>symmetry on, align off</b>: chips show each irrep in its crystal-function content '
+    +'(a pure crystal orbital where symmetry permits; an honest labeled mixture where none exists). '
+    +'Atoms related to the anchor by translations draw identically; atoms related by a rotation or '
+    +'mirror show the correspondingly transformed function.'
+    +'</div>'
+    +'<div class="symline" style="opacity:.8">'
+    +'<b>symmetry on, align on</b>: each irrep with more than one function is rotated so one is '
+    +'maximally out-of-plane and the rest in-plane. An irrep with a single function is pinned by '
+    +'symmetry - the align box cannot change it (no second basis exists).'
+    +'</div>'
+    +'</details>');
   if(chipHost) chipHost.innerHTML=chipHtml;
+  /* N2h2 (Phase 4): keep the SITE-CLASS PICKER options in sync with the
+     loaded structure; buildSymPanel re-runs on every relevant change, so
+     the population lives here (not one-shot initUI). */
+  var _pk=$('symClass');
+  if(_pk){
+    var _opts='<option value="">follow anchor</option>';
+    var _cl2=symClassList();
+    for(var qi=0; qi<_cl2.length; qi++) _opts+='<option value="'+esc(_cl2[qi])+'"'+((SYM.siteSel===_cl2[qi])?' selected':'')+'>'+esc(_cl2[qi])+'</option>';
+    _pk.innerHTML=_opts;
+  }
   host.innerHTML=geoDetail+siteDetail+manHtml;
   /* the strip can change height when chips/rows appear or vanish; re-measure
      the canvas on the next frame so the plot always fills the remaining box. */
@@ -6564,16 +8286,42 @@ function symChipClick(ev){
   if(!t || !t.getAttribute) return;
   var clear=t.getAttribute('data-symclear');
   if(clear){
-    S.symSel={};
+    /* N2f (Phase 4): CLEAR is per-class.  A bare '1' clears every class;
+       a class label drops that class only, preserving the mixed overlay. */
+    if(clear==='1' || clear===''){ S.symSel={}; }
+        else { /* v2.2.18-f1b: drop EVERY manifold key of the class.  The old
+              code deleted only cls+'|'+current-orbSel-l, so a chip selected
+              under a manifold the user later changed survived the x click
+              (zombie chip: lone SALC glyph, plain menu dead). */
+           var _drop=[];
+           for(var _kx in S.symSel){ if(S.symSel.hasOwnProperty(_kx) && _kx.indexOf(clear+'|')===0) _drop.push(_kx); }
+           for(var _di=0; _di<_drop.length; _di++) delete S.symSel[_drop[_di]]; }
     buildSymPanel(); if(typeof orb2dClearCache==='function') orb2dClearCache();
     if(typeof markDirty==='function') markDirty();
     return;
   }
   var ir=t.getAttribute('data-symirrep');
   if(ir===null) return;
-  var mf=symSelectedManifold(); if(!mf) return;
-  var key=mf.el+'|'+mf.l;
-  var man=symManifold(mf.el,mf.l); if(!man) return;
+  /* N2f: chips carry their class; legacy chips fall back to the focus. */
+  var cls=t.getAttribute('data-symclass');
+  if(!cls){ cls=symFocusCls(); if(!cls) return; }
+  var el2=cls.split('#')[0];
+  var mf=S.orbSel && S.orbSel[el2]; if(!mf) return;
+  var key=cls+'|'+mf.l;
+  /* CX12-1: resolve the manifold from the CHIP'S OWN CLASS SITE.
+     The old no-site call resolved via analysisSiteOf() (the anchor's
+     class or the picker focus) - a DIFFERENT site than the one the
+     chips were built from (the class seed).  When two orbit members
+     carry different plane-adapted site groups (t05 corundum (100):
+     the O seed sees C1, the f=(0,y,z) members retain C2), the
+     handler's nv-count and irrep list matched the WRONG manifold:
+     clicking an 'A [1/3]' chip computed nv=1 from the C2 site and
+     rewrote vecIndex=0 on EVERY click - the chip never left [1/3]
+     and neither canvas changed (user report: t05 (100), O anchors
+     at x=0 and x=2/3 families).  classSeedSite(cls) is exactly what
+     the panel used to emit the chip, so counts and irreps now agree
+     with what the user clicked. */
+  var man=symManifold(mf.el,mf.l, classSeedSite(cls)||undefined); if(!man) return;
   /* find the clicked irrep and advance the vector index */
   var cur=S.symSel[key];
   var nv=1;
@@ -6583,6 +8331,7 @@ function symChipClick(ev){
   else next={irrep:ir, vecIndex:0};
   S.symSel[key]=next;
   buildSymPanel();
+  SYM_FRAME_TF_CACHE={}; _symTfOrder=[];   /* F5/N1g: hygiene, mirrors orb2dClearCache */
   if(typeof orb2dClearCache==='function') orb2dClearCache();
   if(typeof markDirty==='function') markDirty();
   if(typeof renderPlane2D==='function') renderPlane2D();
@@ -6590,19 +8339,36 @@ function symChipClick(ev){
 
 /* Return the SALC coefficient vector currently selected for element el's manifold,
    or null if none.  Used by the 2D renderer. */
-function symActiveSALC(el, l){
+function symActiveSALC(clsOrEl, l){
   if(!S.showSym) return null;
-  var key=el+'|'+l;
+  /* N2d: selection keys are CLASS labels ('Na#1|1'); legacy element keys
+     still resolve by scanning the class list of that element. */
+  var key=null, cls=null;
+  if(S.symSel[clsOrEl+'|'+l]){ key=clsOrEl+'|'+l; cls=clsOrEl; }
+  else {
+    var list=symClassList();
+    for(var i=0;i<list.length;i++){
+      if(list[i].split('#')[0]===clsOrEl && S.symSel[list[i]+'|'+l]){ key=list[i]+'|'+l; cls=list[i]; break; }
+    }
+  }
+  if(!key) return null;
   var sel=S.symSel[key];
-  if(!sel) return null;
-  var man=symManifold(el,l);
+  var el=cls.split('#')[0];
+  var man=symManifold(el,l, classSeedSite(cls));
   if(!man) return null;
   for(var i=0;i<man.parts.length;i++){
     var p=man.parts[i];
     if(p.irrep===sel.irrep){
       if(!p.coeffs.length) return null;
       var idx=Math.min(sel.vecIndex||0, p.coeffs.length-1);
-      return {coefs:p.coeffs[idx], irrep:p.irrep, l:l, index:idx, count:p.coeffs.length};
+      /* F2: the consumers (3D lobe mesh, 2D line integral) evaluate against
+         the CRYSTAL frame, so convert the canonical-frame coefficient vector
+         ONCE here.  The chip LABELS keep the canonical vector
+         (coefsCanonical / symOrbitalLabel), which is what makes their
+         p_x / p_z component names conventional. */
+      var _cc=symCoefsToCellFrame(p.coeffs[idx], l, man.site);   /* N2d: class analysis, not the picker's */
+      return {coefs:_cc, irrep:p.irrep, l:l, index:idx, count:p.coeffs.length,
+              coefsCanonical:p.coeffs[idx]};
     }
   }
   return null;
@@ -6653,37 +8419,101 @@ function buildOrbitalControls(){
       html+='<option value="'+L+'"'+(sel.l===L?' selected':'')+'>'+lab+'</option>';
     }
     html+='</select>';
-    /* ---- component selector: irreps when symmetry is on, else px/py/pz ---- */
-    var useSym = S.showSym && symHasGroup();
-    if(useSym){
-      var man=symManifold(el, sel.l);
-      html+='<select class="omsel symsel-om" title="irreducible representation of the site group">';
+    /* ---- K1: component selector -- REDESIGNED (option b) -------------------
+       One vocabulary in every state: the menu lists the DRAWABLE ORBITALS.
+       On the ANCHORED element's row, when the site group is real (declared
+       symmetry, >1 op), each individual SALC VECTOR is offered with its
+       physical name plus irrep and index:   p_x - Eu [1/2].
+       Selecting one sets {irrep, vecIndex} directly, so the menu reaches
+       EVERY degenerate member (the chips remain the group-theory navigator
+       with the out-of-plane percentages).  On all other rows - and when
+       no usable group exists - the menu lists the plain real components
+       (p_z / p_x / ...) exactly as before: the SALCs are computed for the
+       ANCHORED SITE ONLY, so an irrep menu on a non-anchor row was a dead
+       control (the old builder showed irreps on every row regardless of
+       the anchor).  Also fixes the markup bug in which the radius slider
+       and the r= readout were appended through a dangling '+ ...'
+       expression and silently vanished from every rebuilt row.         */
+    /* N3e (Phase 4): the menu is offered per row for ANY class of the
+       element that has a non-trivial group - the sections/picker supply
+       the per-class selections; the option list enumerates the FOCUS
+       class's vectors (picker, else anchor's), consistent with the
+       sections. */
+        var canSalc=false; var _clsGoodK=null;
+    if(S.showSym){
+      var _listK=symClassList();
+      for(var kci=0; kci<_listK.length; kci++){
+        if(_listK[kci].split('#')[0]!==el) continue;
+        var _siteK=classSeedSite(_listK[kci]);
+        var _anK=null;
+        try{ _anK=symAnalyze(_siteK); }catch(e){}
+        if(_anK && _anK.G && _anK.G.length>1){ canSalc=true; if(!_clsGoodK) _clsGoodK=_listK[kci]; break; }
+      }
+    }
+    if(canSalc){
+      /* v2.2.19-f3: the row's SALC menu must follow a class OF THIS ROW'S element.
+         It used symFocusCls() (the picker-or-ANCHOR class) verbatim, so with
+         Na anchored the Cl row menu carried data-symclass="Na#1" and wrote
+         S.symSel['Na#1|l'] - selecting from the Cl menu changed the Na SALC
+         and did nothing to Cl (user-reported).  The focus class is honoured
+         only when it belongs to this element; else this element's own
+         group-carrying class drives the row. */
+      var _flK=symFocusCls();
+      var _clsK=(_flK && _flK.split('#')[0]===el)? _flK
+              : (_clsGoodK || (function(){ var _l=symClassList(); for(var i=0;i<_l.length;i++) if(_l[i].split('#')[0]===el) return _l[i]; return el+'#1'; })());
+      var man=symManifold(el, sel.l, classSeedSite(_clsK));
+      var kk=_clsK+'|'+sel.l;
+      var cs=S.symSel[kk];
+      html+='<select class="omsel symsel-om" data-symclass="'+esc(_clsK)+'" title="symmetry-adapted orbital (SALC) of this site class">';
       if(!man || !man.parts.length){
         html+='<option value="0">—</option>';
       } else {
         for(var ip=0;ip<man.parts.length;ip++){
           var prt=man.parts[ip];
-          var kk=el+'|'+sel.l;
-          var cs=S.symSel[kk];
-          var on=(cs && cs.irrep===prt.irrep);
-          html+='<option value="'+esc(prt.irrep)+'"'+(on?' selected':'')+'>'+esc(prt.irrep)+'</option>';
+          var nv=prt.coeffs.length;
+          for(var vi=0; vi<nv; vi++){
+            /* label with the CELL-frame function when we have it (the
+               unchecked crystal-axes basis), else the canonical name */
+            var labVec=(prt.cellVecs && prt.cellVecs[vi])? prt.cellVecs[vi] : prt.coeffs[vi];
+            var lab=symOrbitalLabel(labVec, sel.l);
+            var val=prt.irrep+'|'+vi;
+            var on=(cs && cs.irrep===prt.irrep && (cs.vecIndex||0)===vi);
+            html+='<option value="'+esc(val)+'"'
+                 +(on?' selected':'')+'>'
+                 +esc(lab+(nv>1?(' ['+(vi+1)+'/'+nv+']'):'')+' \u2014 '+prt.irrep)
+                 +'</option>';
+          }
         }
       }
       html+='</select>';
     } else {
-      html+='<select class="omsel" title="real orbital component">';
-      var names=ORB_NAMES[sel.l]||['s'];
-      for(var mi=0;mi<names.length;mi++){
-        html+='<option value="'+mi+'"'+(sel.m===mi?' selected':'')+'>'+names[mi]+'</option>';
+      /* v2.2.18-f2 SALC-capture guard: when a chip-selected SALC owns this
+         element at this manifold, the plain menu cannot affect the
+         drawing - show it disabled with an honest tooltip. */
+      var _salCapt=false; var _salCapIrep='';
+      if(S.showSym){
+        var _listD=symClassList();
+        for(var kdd=0; kdd<_listD.length; kdd++){
+          if(_listD[kdd].split('#')[0]!==el) continue;
+          var _sd=symActiveSALC(_listD[kdd], sel.l);
+          if(_sd){ _salCapt=true; _salCapIrep=_sd.irrep; break; }
+        }
       }
-      html+='</select>';
-    }
-        + '<input type="range" class="orad" min="0.3" max="3" step="0.05" value="'
-        + (S.orbRad[el]!==undefined?S.orbRad[el]:1).toFixed(2)
-        + '" title="radius multiplier for this element orbital">'
-        + '<span class="ov" title="radial maximum r (Angstrom); double-click to reset this element">'
-        + 'r='+(orbitalRmax(el,sel.l,sel.n)*(S.orbRad[el]!==undefined?S.orbRad[el]:1)*S.orbScale).toFixed(2)+' \u00C5</span>'
-        + '</span>';
+      var names=ORB_NAMES[sel.l]||['s'];
+      var _tt=(_salCapt? (el+" shows the selected "+_salCapIrep+" SALC - click the chip (x) in the symmetry strip to free the plain menu")
+                    : "real orbital component");
+      var _dis=(_salCapt?' disabled':'');
+      html+="<select class=\"omsel\""+_dis+" title=\""+esc(_tt)+"\">";
+      for(var mi=0;mi<names.length;mi++){
+        html+="<option value=\""+mi+"\""+(sel.m===mi?' selected':'')+'>'+esc(names[mi])+"</option>";
+      }
+      html+="</select>";    }
+    html+= '<input type="range" class="orad" min="0.3" max="3" step="0.05" value="'
+         + (S.orbRad[el]!==undefined?S.orbRad[el]:1).toFixed(2)
+         + '" title="radius multiplier for this element orbital">'
+         + '<span class="ov" title="radial maximum r (Angstrom); double-click to reset this element">'
+         + 'r='+(orbitalRmax(el,sel.l,sel.n)*(S.orbRad[el]!==undefined?S.orbRad[el]:1)*S.orbScale).toFixed(2)+' \u00C5</span>'
+         + '</span>';
   }
   list.innerHTML=html;
   /* wire the selects */
@@ -6712,20 +8542,31 @@ function buildOrbitalControls(){
         var L=parseInt(this.value,10);
         if(L>nn-1) L=nn-1;                        /* keep l < n */
         S.orbSel[el]={n:nn, l:L, m:0};
-        delete S.symSel[el+'|'+L];                /* new manifold -> clear SALC */
+                /* v2.2.19-f4: new manifold -> clear EVERY chip of this element (any
+           of its classes, at any manifold).  The old delete targeted the
+           legacy element key el|L which has not existed since Phase 4 made
+           selections class-keyed, so chips silently survived manifold
+           changes and resurrected when the user switched back. */
+        var _dm4=[];
+        for(var _km4 in S.symSel){ if(S.symSel.hasOwnProperty(_km4) && _km4.split('|')[0].split('#')[0]===el) _dm4.push(_km4); }
+        for(var _dq4=0; _dq4<_dm4.length; _dq4++) delete S.symSel[_dm4[_dq4]];
         orb2dClearCache();
         markDirty();                             /* 3D lobes follow l/n change */
         buildSymPanel();
         buildOrbitalControls(); renderPlane2D();
       });
-      /* the component select is either an m-index or an irrep name */
+      /* K2: the SALC menu value now carries  irrep|vecIndex  */
       if(msel && msel.className.indexOf('symsel-om')>=0){
         msel.addEventListener('change',function(){
           var cur=S.orbSel[el]||{l:0,n:orbValenceN(el,0)};
-          var kk=el+'|'+cur.l;
-          S.symSel[kk]={irrep:this.value, vecIndex:0};
+          var _cls2=(msel.getAttribute('data-symclass')||symFocusCls()||el+'#1');
+          var kk=_cls2+'|'+cur.l;     /* N3e: class-keyed selection */
+          var parts=this.value.split('|');
+          var ir=parts[0];
+          var vi=(parts.length>1 && !isNaN(parseInt(parts[1],10)))? parseInt(parts[1],10):0;
+          S.symSel[kk]={irrep:ir, vecIndex:vi};
           if(typeof orb2dClearCache==='function') orb2dClearCache();
-          buildSymPanel();
+          buildSymPanel();      /* K3b: chips and menu must agree immediately */
           markDirty();
           renderPlane2D();
         });
@@ -6845,7 +8686,7 @@ function updatePlanePanel(){
      content depends only on WHICH elements are in the slab - not on counts -
      so rebuild only when the element set changes.  Direct callers of
      buildOrbitalControls (n/l/m/radius handlers) are unaffected. */
-  var _orbSig=order.join(',')+'|'+((SYM && SYM.cache)?SYM.cache.key:'');
+  var _orbSig=order.join(',')+'|'+((SYM && SYM.cache)?SYM.cache.key:'')+'|'+((PLANE&&PLANE.anchor)?PLANE.anchor.sym:'')+'|'+((S.showSym&&symHasGroup())?'sym':'plain')+'|'+((S.symAlign===false)?'xtal':'align');   /* K3: anchor element, menu style and align basis all change the row contents */
   if(updatePlanePanel._osig!==_orbSig){
     updatePlanePanel._osig=_orbSig;
     if(typeof buildOrbitalControls==='function') buildOrbitalControls();
@@ -6912,6 +8753,10 @@ function setHKL(h,k,l){ markDirty();
        the 2D net group both change -> drop the cached analysis and rebuild the
        symmetry panel before redrawing. */
     SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;
+    SYM.cacheByClass={}; _SYM_CLASS_ORDER=[]; SYM.manCacheByKey={}; SYM.manKeyOrder=[];   /* N1k */
+    SYM.cacheByKey={}; SYM.keyOrder=[];   /* Fix #1 */
+    SYM_FRAME_TF_CACHE={}; _symTfOrder=[];   /* F5: normal change => canonical frame change */
+    _orbitRelClear();                       /* M5: relations are anchor-relative */
     if(typeof buildSymPanel==='function') buildSymPanel();
     renderPlane2D();
   }
@@ -6936,7 +8781,7 @@ function updateInfo(){
   var fs='';
   for(var k=0;k<sorder.length;k++){
     var n=counts[sorder[k]]||0;
-    fs+=sorder[k];
+    fs+=esc(sorder[k]);
     if(n>1) fs+='<sub>'+n+'</sub>';
     if(k<sorder.length-1) fs+=' ';
   }
@@ -6946,7 +8791,7 @@ function updateInfo(){
     var rf='';
     for(var k3=0;k3<sorder.length;k3++){
       var n3=(counts[sorder[k3]]||0)/g;
-      rf+=sorder[k3];
+      rf+=esc(sorder[k3]);
       if(n3>1) rf+='<sub>'+n3+'</sub>';
     }
     fs+=' &nbsp;&times;&nbsp; '+g+' ('+rf+' per formula unit)';
@@ -6966,7 +8811,7 @@ function updateInfo(){
   var leg='';
   for(var q2=0;q2<sorder.length;q2++){
     var sym=sorder[q2], inf=elInfo(sym);
-    leg+='<div class="leg"><i style="background:'+inf[0]+'"></i>'+sym+' <span style="color:#8a93a6">&times; '+(counts[sym]||0)+'/cell</span></div>';
+    leg+='<div class="leg"><i style="background:'+esc(inf[0])+'"></i>'+esc(sym)+' <span style="color:#8a93a6">&times; '+(counts[sym]||0)+'/cell</span></div>';
   }
   $('legend').innerHTML=leg;
 
@@ -6981,6 +8826,7 @@ function updateInfo(){
 function loadStructure(text,name){
   try{
     var st=parseAny(text,name);
+    st.rev=++S_structRev;                    /* K0: fresh analysis-key domain */
     S.struct=st; S.name=name;
     $('deckText').value=text;
     rebuildScene(); fitCamera(true); updateInfo();
@@ -6997,7 +8843,14 @@ function loadStructure(text,name){
        the previous (cleared) chooser DOM. */
     if(typeof orb2dClearCache==='function') orb2dClearCache();
     updatePlanePanel._osig=null;
-    meshOrbCache={};                   /* drop cached lobe meshes (they are generic) */
+    /* K3: the site-analysis and manifold memos are rev-keyed (K1) but are
+       ALSO dropped here, so a re-parse can never serve a stale analysis
+       even if the rev logic were ever bypassed.  */
+    if(typeof SYM!=='undefined' && SYM){ SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;
+      SYM.cacheByClass={}; _SYM_CLASS_ORDER=[]; SYM.manCacheByKey={}; SYM.manKeyOrder=[]; SYM.cacheByKey={}; SYM.keyOrder=[]; SYM.siteSel=null; }
+    SYM_FRAME_TF_CACHE={}; _symTfOrder=[];   /* F5/N1: new structure (rev bump) */
+    _orbitRelClear();                       /* M5: new structure rev */
+    meshOrbClear();                    /* drop cached lobe meshes (they are generic) */
     var olist=$('orbList'); if(olist) olist.innerHTML='';
     var _pw=$('planewrap');
     if(_pw) _pw.classList.add('hidden');
@@ -7029,23 +8882,19 @@ function applyTheme(t){ markDirty();
   try{ localStorage.setItem('crystal-viewer-theme',t); }catch(e){}
   try{ if(typeof renderPlane2D==='function') renderPlane2D(); }catch(e){}
 }
-function initUI(){
-  var view=$('view');
-  glc=$('glc');
-  ovc=$('ovc');
-  octx=ovc.getContext('2d');
-  /* plc must exist before the noSel(plc) touch guard below and before
-     the 2D wiring, so fetch it here (it used to be assigned only in the
-     2D wiring section, after noSel(), so the touch-action/user-select
-     guards never applied to the 2D canvas). */
-  plc=$('plc');
-  pctx=plc?plc.getContext('2d'):null;
-
+/* Build (or rebuild after a context loss) every WebGL resource the viewer
+   owns: the context, the six programs + their uniform/attribute locations,
+   and the shared sphere/cylinder meshes and box buffer.  Returns true on
+   success.  Called once from initUI and again from the webglcontextrestored
+   handler, so it must be self-contained and side-effect-idempotent.  Any
+   CPU-side caches that hold GPU handles are dropped first, because the old
+   buffers/textures die with the lost context. */
+function glInit(){
+  if(!glc) return false;
   try{
     gl=glc.getContext('webgl',{antialias:true})||glc.getContext('experimental-webgl');
   }catch(e){ gl=null; }
-  if(!gl){ toast('WebGL is not available in this browser.',true); return; }
-
+  if(!gl) return false;
   /* Request OPTIONAL 32-bit index support up front.  makeLobeMesh() can emit
      Uint32Array index buffers for orbital-lobe meshes with more than 65,536
      vertices in one sign patch; a WebGL1 context silently rejects such
@@ -7097,10 +8946,67 @@ function initUI(){
   locC.uVP=gl.getUniformLocation(progC,'uVP');
   locC.uEye=gl.getUniformLocation(progC,'uEye');
 
+  /* GPU-handle-bearing caches are invalid after a restore: drop the CPU-side
+     mesh caches and NULL every lazily-created GL buffer handle so the
+     `if(!buf)` guards recreate them on the next build.  (On the initial call
+     all of these are already null/empty, so this is a no-op.) */
+  meshOrbClear();
   meshHi=uploadMesh(makeSphere(20,14));
   meshLo=uploadMesh(makeSphere(10,7));
   meshCyl=uploadMesh(makeCyl(12));
   boxBufHome=gl.createBuffer(); boxBufSc=null;
+  bondBatch=null;   /* its GL buffers died with the context; rebuilt on demand */
+  anchorBuf=null; anchorCnt=0;                 /* rebuilt by buildAnchorMarker */
+  planeBuf.outline=planeBuf.grid=planeBuf.normal=planeBuf.fill=null;
+  planeBuf.count.outline=planeBuf.count.grid=planeBuf.count.normal=planeBuf.count.fill=0;
+  return true;
+}
+function initUI(){
+  var view=$('view');
+  glc=$('glc');
+  ovc=$('ovc');
+  octx=ovc.getContext('2d');
+  /* plc must exist before the noSel(plc) touch guard below and before
+     the 2D wiring, so fetch it here (it used to be assigned only in the
+     2D wiring section, after noSel(), so the touch-action/user-select
+     guards never applied to the 2D canvas). */
+  plc=$('plc');
+  pctx=plc?plc.getContext('2d'):null;
+
+  /* Context-loss/restore wiring is registered ONCE here; the GL resources
+     themselves live in glInit() so a restore can rebuild them wholesale.
+     The 2D overlay (ovc) and the UI event listeners below are untouched by
+     a 3D context loss and must not be re-registered. */
+  if(glc && glc.addEventListener){
+    glc.addEventListener('webglcontextlost',function(e){
+      e.preventDefault();               /* let the browser attempt a restore */
+      glLost=true;
+      gl=null;
+      try{ toast('3D context lost - waiting for the GPU to restore it\u2026',true); }catch(_e){}
+    },false);
+    glc.addEventListener('webglcontextrestored',function(){
+      try{
+        if(glInit()){
+          glLost=false;
+          /* glInit() recreated the programs and shared meshes, but every
+             scene buffer (cell box, bonds, plane quad, anchor marker) was
+             nulled - rebuild them from the still-loaded structure before
+             the next frame draws against stale/empty geometry. */
+          try{ if(S.struct) rebuildScene(); }catch(_e2){}
+          try{ if(typeof buildPlaneQuad==='function' && PLANE.anchor) buildPlaneQuad(); }catch(_e3){}
+          try{ if(typeof buildAnchorMarker==='function') buildAnchorMarker(); }catch(_e4){}
+          markDirty(); wake3D();
+          toast('3D context restored.');
+        }
+      }
+      catch(_e){ glLost=true; toast('3D context restore failed.',true); }
+    },false);
+  }
+  var _glOk=false;
+  try{ _glOk=glInit(); }
+  catch(e){ glLost=true; toast('3D init failed: '+(e&&e.message?e.message:'shader/GL error'),true); }
+  if(!_glOk){ if(!glLost) toast('WebGL is not available in this browser.',true); return; }
+  glLost=false;    /* glInit() leaves us with a live context */
 
   /* --- mouse --- */
   var drag=null;
@@ -7433,21 +9339,42 @@ function initUI(){
     symAl.addEventListener('change',function(){
       S.symAlign=this.checked;
       S.symSel={};                 /* the basis changed -> drop the selection */
+      SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;   /* H3: drop the memoised manifold too */
       buildSymPanel();
+      if(typeof buildOrbitalControls==='function') buildOrbitalControls();   /* K3b: menu labels follow the basis flip */
       orb2dClearCache();
       renderPlane2D();
       markDirty();                 /* 3D lobes follow the alignment change */
     });
   }
   /* symmetry mode: full 3D site / plane-preserving (slab) / surface */
+  /* N2g (Phase 4): SITE-CLASS PICKER wiring - picking a class changes ONLY
+     the analysis target of the strip/badge/dropdowns: the plane, anchor and
+     slice stay put; class-keyed selections survive (mixed overlay). */
+  var symClassSel=$('symClass');
+  if(symClassSel){
+    symClassSel.addEventListener('change',function(){
+      SYM.siteSel=(String(this.value)==='')? null : this.value;
+      SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;
+      if(typeof buildSymPanel==='function') buildSymPanel();
+      if(typeof buildOrbitalControls==='function') buildOrbitalControls();
+      if(typeof orb2dClearCache==='function') orb2dClearCache();
+      if(typeof renderPlane2D==='function') renderPlane2D();
+      if(typeof markDirty==='function') markDirty();
+    });
+  }
   var symMode=$('symMode');
   if(symMode){
     S.symMode=symMode.value||'slab';
     symMode.addEventListener('change',function(){
       S.symMode=this.value;
       SYM.cache=null; SYM.manCache=null; SYM.manCacheKey=null;                 /* mode changes the group -> drop cache */
+      SYM.cacheByClass={}; _SYM_CLASS_ORDER=[]; SYM.manCacheByKey={}; SYM.manKeyOrder=[];   /* N1l: class maps too - the MODE selector changes EVERY class's group */
+      SYM.cacheByKey={}; SYM.keyOrder=[];   /* Fix #1: mode changes the group -> drop key cache */
+      SYM_FRAME_TF_CACHE={}; _symTfOrder=[];   /* F5: adapted group change => frame change */
       S.symSel={};                    /* selected SALCs no longer valid       */
       buildSymPanel();
+      if(typeof buildOrbitalControls==='function') buildOrbitalControls();   /* K3b: the menu style follows the mode */
       orb2dClearCache();
       renderPlane2D();
       markDirty();
@@ -7838,6 +9765,8 @@ function initUI(){
   /* redraw 2D panel on resize / theme change */
   window.addEventListener('resize',function(){ markDirty(); markCanvasResize(); markPlaneCanvasResize(); renderPlane2D(); });
 
+  addVersionBadge();
+
   loadStructure(EXAMPLE_CIF,'NaCl_rocksalt.cif');
   setHKL(0,0,1);
   var _pw0=$('planewrap');
@@ -7849,6 +9778,47 @@ function initUI(){
   frame();
 }
 
+/* ---- VISIBLE VERSION BADGE -------------------------------------------------
+   A small chip in the top-left of the 3D view (#view is position:relative
+   and nothing else stacks above z 30, so z 60 cannot be occluded).
+   Self-contained inline styling: no CSS additions, works in the desktop
+   and mobile collapsed layouts untouched.  Clicking shows a toast with
+   the full build string; the title/aria carry the version for a11y. */
+function addVersionBadge(){
+  if(typeof document==='undefined' || !document.getElementById) return;
+  /* Idempotence guard.  The badge is created below, so a DIRECT
+     getElementById is the right check here: it is always fresh and cannot
+     be fooled by a stale memo.  ($() no longer pins null, but a direct
+     lookup keeps this self-contained and independent of the cache.) */
+  if(document.getElementById('cvBadge')) return;
+  var view=$('view');
+  if(!view) return;
+  var b=document.createElement('div');
+  b.id='cvBadge';
+  b.setAttribute('aria-label','Generic Crystal Viewer version '+CV_VERSION);
+  b.title='Generic Crystal Viewer '+CV_VERSION+'  '+CV_BUILD;
+  b.style.cssText='position:absolute;bottom:15px;right:8px;z-index:60;'
+    +'font:600 10px ui-monospace,Consolas,monospace;letter-spacing:.4px;'
+    +'padding:3px 8px;border-radius:14px;cursor:pointer;'
+    +'background:rgba(10,14,23,0.55);color:#e8eefc;border:1px solid rgba(255,255,255,0.18);'
+    +'text-shadow:0 1px 1px rgba(0,0,0,0.6);opacity:.85;transition:opacity .15s;';
+  b.textContent=CV_VERSION;
+  b.addEventListener('mouseenter',function(){ b.style.opacity='1'; });
+  b.addEventListener('mouseleave',function(){ b.style.opacity='.85'; });
+  b.addEventListener('click',function(){
+    if(typeof toast==='function') toast('Generic Crystal Viewer v'+CV_VERSION+'  '+CV_BUILD,false);
+  });
+  view.appendChild(b);
+}
+
+/* BUILD BANNER (console) - the visible badge is added by initUI()
+   (addVersionBadge); this line makes the running build identifiable in
+   any DevTools session or user screenshot even with the badge hidden. */
+try{
+  if(typeof console!=='undefined' && console.log){
+    console.log('%cGeneric Crystal Viewer '+CV_VERSION+'  ('+CV_BUILD+')','color:#2563eb;font-weight:600;');
+  }
+}catch(e){}
 document.addEventListener('DOMContentLoaded',initUI);
 </script>
 </body>

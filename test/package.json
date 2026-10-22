@@ -1,0 +1,14 @@
+{
+  "name": "crystalviewer-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Unit-test harness for the CrystalViewer single-file app. Loads the viewer's <script> in a DOM stub and exercises the symmetry engine, group tables, CIF parsing, site analysis, and the ../decks fixtures.",
+  "scripts": {
+    "test": "node --test",
+    "test:unit": "node --test crystalviewer.test.js",
+    "test:decks": "node --test decks.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
