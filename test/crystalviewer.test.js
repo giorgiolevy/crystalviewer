@@ -466,3 +466,149 @@ test('symAnalyze memoises by key (cacheByKey is live, not dead)', { skip: cv.SYM
   assert.equal(a1, a2, 'second call returns the cached object');
   assert.ok(Object.keys(cv.SYM.cacheByKey).length >= 1, 'key cache populated');
 });
+
+/* ==========================================================================
+   SUITE 10 - orbit transport (orientedSALCFor / orbitRelationOf).
+
+   The transport rotates a SALC coefficient vector D_l(R) from the anchor to
+   each orbit member.  Two behaviours are pinned here:
+
+   (a) A general-position orbit in a primitive cell: every member must be
+       reached, INCLUDING a member reached by a point op with t=(0,0,0).
+       Regression for the corrected M1-FIX2 guard, which used to skip any
+       t=0 relation and left one orbit member untransported.
+
+   (b) The anchor itself and its pure-translation images must carry the
+       UNCHANGED anchor vector (no spurious rotation).
+   ========================================================================== */
+const P3_GENERAL_CIF = `data_P3_general
+_cell_length_a 5.0
+_cell_length_b 5.0
+_cell_length_c 6.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 120
+_symmetry_space_group_name_H-M 'P 3'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+X1 X 0.4 0.0 0.25
+`;
+
+test('P3 general-position orbit: all members transported (t=0 member included)', () => {
+  const st = cv.parseCIF(P3_GENERAL_CIF, 'p3gen');
+  cv.S.struct = st;
+  assert.equal(st.atoms.length, 3, 'general position gives 3 atoms');
+  const a = st.cell;
+  const f2c = f => [
+    a[0][0] * f[0] + a[1][0] * f[1] + a[2][0] * f[2],
+    a[0][1] * f[0] + a[1][1] * f[1] + a[2][1] * f[2],
+    a[0][2] * f[0] + a[1][2] * f[1] + a[2][2] * f[2],
+  ];
+  const anchor = { sym: 'X', cart: f2c([0.4, 0, 0.25]) };
+  // transport p_x = [0,1,0] (basis order is [p_z, p_x, p_y]) to each atom
+  const got = [];
+  for (const at of st.atoms) {
+    const ori = cv.orientedSALCFor(0, anchor, [0, 1, 0], 1, st, f2c(at.f));
+    got.push(ori ? ori.coefs : null);
+  }
+  // the anchor keeps p_x
+  assert.ok(got[0], 'anchor has a relation');
+  assert.ok(Math.abs(got[0][1] - 1) < 1e-6, 'anchor keeps p_x');
+  // BOTH other members must be transported (this is the t=0 fix): each is a
+  // 120-degree rotation of p_x, i.e. [0, cos120, +/-sin120] = [0,-0.5,±0.866]
+  for (const i of [1, 2]) {
+    assert.ok(got[i], `atom ${i} must be transported (was NULL before the t=0 fix)`);
+    assert.ok(Math.abs(got[i][0]) < 1e-6, `atom ${i}: no p_z component`);
+    assert.ok(Math.abs(got[i][1] + 0.5) < 1e-6, `atom ${i}: cos(120) component`);
+    assert.ok(Math.abs(Math.abs(got[i][2]) - 0.8660254037844386) < 1e-6,
+      `atom ${i}: sin(120) component`);
+  }
+  // the two non-anchor members must be the two OPPOSITE 120-degree rotations
+  assert.ok(Math.abs(got[1][2] + got[2][2]) < 1e-6,
+    'the two members rotate in opposite senses');
+});
+
+test('orbit transport: anchor and translation images keep the anchor vector', () => {
+  // Fm-3m rocksalt: every atom is a translation image of the anchor, so the
+  // whole class must draw the UNCHANGED vector (no spurious rotation).
+  const st = cv.parseCIF(NACL_CIF, 'NaCl');
+  cv.S.struct = st;
+  const a = st.cell;
+  const f2c = f => [
+    a[0][0] * f[0] + a[1][0] * f[1] + a[2][0] * f[2],
+    a[0][1] * f[0] + a[1][1] * f[1] + a[2][1] * f[2],
+    a[0][2] * f[0] + a[1][2] * f[1] + a[2][2] * f[2],
+  ];
+  const anchor = { sym: 'Na', cart: f2c([0, 0, 0]) };
+  let checked = 0;
+  for (const at of st.atoms) {
+    if (at.sym !== 'Na') continue;
+    const ori = cv.orientedSALCFor(0, anchor, [0, 1, 0], 1, st, f2c(at.f));
+    assert.ok(ori, 'Na atom has a relation');
+    // translation images -> identity rotation -> vector unchanged
+    assert.ok(Math.abs(ori.coefs[0]) < 1e-6 && Math.abs(ori.coefs[1] - 1) < 1e-6
+      && Math.abs(ori.coefs[2]) < 1e-6,
+      `Na image at ${at.f} must keep the anchor vector`);
+    checked++;
+  }
+  assert.ok(checked >= 4, 'checked several Na images');
+});
+
+/* ==========================================================================
+   SUITE 11 - the t17 demo deck: C3 site (irreps) vs general-position orbit
+   (transport).  This pins the two behaviours the deck exists to show.
+   ========================================================================== */
+test('t17 deck: on-axis site is C3 with p -> A + E', () => {
+  const st = cv.parseCIF(
+    require('node:fs').readFileSync(require('node:path').resolve(__dirname, '..', 'decks', 't17_p3_c3_orbit.cif'), 'utf8'),
+    't17');
+  cv.S.struct = st;
+  cv.S.symMode = 'full';
+  cv.PLANE.on = true;
+  cv.PLANE.n = cv.planeNormal(0, 0, 1);
+  const a = st.cell;
+  const f2c = f => [
+    a[0][0] * f[0] + a[1][0] * f[1] + a[2][0] * f[2],
+    a[0][1] * f[0] + a[1][1] * f[1] + a[2][1] * f[2],
+    a[0][2] * f[0] + a[1][2] * f[1] + a[2][2] * f[2],
+  ];
+  const onAxis = { sym: 'X', cart: f2c([0, 0, 0.3]) };
+  const an = cv.symAnalyze(onAxis);
+  const name = an.identC ? an.identC.name : an.ident.name;
+  assert.equal(name, 'C3', 'on-axis X site group');
+  const man = cv.symManifold('X', 1, onAxis);
+  assert.deepEqual(man.parts.map(p => p.irrep).sort(), ['A', 'E'], 'p -> A + E');
+});
+
+test('t17 deck: the general-position C3 orbit rotates by 120 degrees', () => {
+  const st = cv.parseCIF(
+    require('node:fs').readFileSync(require('node:path').resolve(__dirname, '..', 'decks', 't17_p3_c3_orbit.cif'), 'utf8'),
+    't17');
+  cv.S.struct = st;
+  const a = st.cell;
+  const f2c = f => [
+    a[0][0] * f[0] + a[1][0] * f[1] + a[2][0] * f[2],
+    a[0][1] * f[0] + a[1][1] * f[1] + a[2][1] * f[2],
+    a[0][2] * f[0] + a[1][2] * f[1] + a[2][2] * f[2],
+  ];
+  const anchor = { sym: 'X', cart: f2c([0.45, 0, 0.3]) };
+  // the three general-position members (the on-axis atom is a different class)
+  const members = st.atoms.filter(at => Math.abs(at.f[2] - 0.3) < 1e-6
+    && !(Math.abs(at.f[0]) < 1e-6 && Math.abs(at.f[1]) < 1e-6));
+  assert.equal(members.length, 3, 'three general-position X atoms');
+  let rotated = 0;
+  for (const at of members) {
+    const ori = cv.orientedSALCFor(0, anchor, [0, 1, 0], 1, st, f2c(at.f));
+    assert.ok(ori, `member ${at.f} must be transported`);
+    // each member is either the anchor itself (p_x) or a 120-degree rotation
+    const isAnchor = Math.abs(ori.coefs[1] - 1) < 1e-6;
+    const isRot = Math.abs(ori.coefs[1] + 0.5) < 1e-6 && Math.abs(Math.abs(ori.coefs[2]) - 0.8660254037844386) < 1e-6;
+    assert.ok(isAnchor || isRot, `member ${at.f}: expected p_x or a 120-deg rotation`);
+    if (isRot) rotated++;
+  }
+  assert.equal(rotated, 2, 'both non-anchor members are rotated by 120 degrees');
+});

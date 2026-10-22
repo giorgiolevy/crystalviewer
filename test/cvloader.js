@@ -45,6 +45,7 @@ const EXPORTS = [
   // --- structure parsing + classification ---
   'parseCIF', 'parseAny', 'parseQE', 'parseMPJSON',
   'classPartition', 'anchorClassId', 'symOpsHash',
+  'orbitRelationOf', 'transportSALCCoefs', 'orientedSALCFor',
   'planeNormal', 'buildSlice', 'setHKL', 'reciprocalRows', 'PG_planeAdaptedOps',
   // --- site analysis (needs app state; see cvState below) ---
   'symAnalyze', 'symManifold', 'symClassList',
@@ -90,7 +91,11 @@ function makeDomStub() {
 }
 
 function extractScript(html) {
-  const m = html.match(/<script>([\s\S]*?)<\/script>/);
+  /* Match the REAL script block: a <script> tag at the start of a line (the
+     viewer puts it alone on its own line).  A bare <script> mentioned inside
+     an HTML comment (e.g. documentation text) must NOT be picked up, or the
+     capture would start in the comment and run to the real </script>. */
+  const m = html.match(/^<script>([\s\S]*?)^<\/script>/m);
   if (!m) throw new Error('cvloader: no <script> block found in the HTML file');
   return m[1];
 }

@@ -4,7 +4,7 @@
    ----------------------
 
   Version: 2.1.0
-  Build:   CV-2026-10-18-RH1
+  Build:   CV-2026-10-22-OR1     (OR = orbit-transport fix: t=0 guard)
 
   A single-file, dependency-free crystal-structure viewer.  Load a structure
   (CIF, Materials-Project JSON, or a pw.x input deck), pick an (h,k,l) slice
@@ -627,7 +627,7 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
    writing Na SALC selections).  f4 manifold change clears every chip of
    that element (the class-keyed successor of the dead legacy key). */
 var CV_VERSION='2.1.0';
-var CV_BUILD='CV-2026-10-18-RH1'
+var CV_BUILD='CV-2026-10-22-OR1'
 /* K0: STRUCTURE REVISION.  Monotonic counter bumped by every successful
    loadStructure(); the value is stamped on S.struct.rev and leads the
    symAnalyze() analysis key, so two DIFFERENT structures can never alias
@@ -2636,11 +2636,25 @@ function orbitRelationOf(st, anch, fj){
       } else {
         if(isT && (t[0]||t[1]||t[2])) continue;  /* non-identity translation already handled in pass 1 */
         if(isT && !(t[0]||t[1]||t[2]) && i===0) continue;  /* anchor itself */
-        /* M1-FIX2: the ANCHOR SITE ITSELF (t=0 under a point op) is not a
-           "related member" - it draws the anchor's own vector.  Without this
-           guard the finder matched e.g. m_y (which FIXES the anchor site)
-           and spuriously flipped the y-odd SALC at the anchor. */
-        if(!(t[0]||t[1]||t[2])) continue;
+        /* M1-FIX2 (corrected): skip an operation only when it maps the
+           anchor onto the ANCHOR ITSELF (im ~= fa) - that op draws the
+           anchor's own vector and must not be treated as a relation to a
+           DIFFERENT member.  The old test skipped on t=(0,0,0), which also
+           (wrongly) rejected a genuine orbit member that happens to be
+           reached by a point op with NO lattice shift: e.g. a P3
+           general-position atom (0.4,0,0.25), whose C3 image (0,0.4,0.25)
+           is a DIFFERENT atom reached with t=0.  Such a member was left
+           untransported (drawn unrotated).  The target fj here is already
+           known NOT to be a periodic image of the anchor (the self-image
+           short-circuit above returns early), so any op that reaches it -
+           with any lattice shift - is a legitimate relation.  The
+           m_y-fixes-the-anchor case the original guard protected is still
+           handled: that op maps the anchor to ITSELF, caught by the
+           im~=fa test below. */
+        var _selfI=(Math.abs(im[0]-fa[0])<FRAC_TOL &&
+                    Math.abs(im[1]-fa[1])<FRAC_TOL &&
+                    Math.abs(im[2]-fa[2])<FRAC_TOL);
+        if(_selfI) continue;
         var R=PG_mm(PG_mm(Ac,M),Ai);
         /* CX11-3: SLAB/SURFACE-COMPATIBLE OPS ONLY.  The drawn SALC
            is an irrep of the PLANE-ADAPTED site group, so an op that

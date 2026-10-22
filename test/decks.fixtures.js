@@ -221,4 +221,22 @@ module.exports = [
     planes: { '001': { group: 'S4', p: 'B+E' }, '111': { group: 'C1', p: 'A' } },
     note: 'P4/ncc (ITA 130), Zr at origin: site symmetry -4 (S4); p -> B+E.',
   },
+  {
+    file: 't17_p3_c3_orbit.cif',
+    symbol: 'P 3',
+    ops: 3, atoms: 4,
+    sites: [
+      { cls: 'X#1', group: 'C3', p: 'A+E' },
+      { cls: 'X#2', group: 'C1', p: 'A' },
+    ],
+    planes: { '001': { group: 'C3', p: 'A+E' }, '111': { group: 'C1', p: 'A' } },
+    note: 'PURPOSE-BUILT group-theory demo (P3, hexagonal cell). One element X in '
+        + 'TWO positions: Xa on the 3-fold axis at (0,0,0.3) -> site C3 (p -> A + E, '
+        + 'the irrep showcase), and Xb at the general position (0.45,0,0.3) -> site C1 '
+        + 'whose C3 orbit is the 3 atoms (0.45,0,0.3), (0,0.45,0.3), (0.55,0.55,0.3) '
+        + 'related by the 120-degree rotation (the orbit-transport showcase: the drawn '
+        + 'glyph ROTATES by 120 deg from one member to the next). The 3-fold axis is '
+        + '[001] here, so (001) preserves it (C3) and (111) does not (C1). This deck '
+        + 'exercises the v2.2.29 t=0 orbit-transport fix (all three Xb members rotate).',
+  },
 ];
