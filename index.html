@@ -3,8 +3,9 @@
   Generic Crystal Viewer
    ----------------------
 
-  Version: 2.1.0
-  Build:   CV-2026-10-22-OR1     (OR = orbit-transport fix: t=0 guard)
+  Version: 2.1.2
+  Build:   CV-2026-10-24-EX3     (EX3 = 2-D layer export in the standard
+                                  a1=+x / a2 in xy / normal=+z orientation)
 
   A single-file, dependency-free crystal-structure viewer.  Load a structure
   (CIF, Materials-Project JSON, or a pw.x input deck), pick an (h,k,l) slice
@@ -291,6 +292,15 @@ details summary:hover{color:var(--accent)}
 }
 #pickHint.gone{display:none}
 #pickHint b{color:var(--accent)}
+/* right-click context menus (3-D panel and 2-D plane panel) */
+.ctxmenu{position:fixed;z-index:9999;background:var(--panel);border:1px solid var(--line);
+  border-radius:9px;box-shadow:var(--shadow);padding:4px;min-width:210px}
+.ctxmenu.hidden{display:none}
+.ctxitem{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--fg);
+  font:inherit;font-size:13px;padding:8px 12px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.ctxitem:hover{background:var(--btn-hover)}
+.ctxitem:disabled{color:var(--fg3);cursor:default;opacity:.55}
+.ctxitem:disabled:hover{background:transparent}
 /* floating button stack, top-left of the 3D view: the three buttons flow
    in a column gap so the conditional "clear plane" collapses gracefully */
 #viewBtns{
@@ -466,6 +476,10 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
    <button class="btn" id="btOpen">Open file&#8230;</button>
    <button class="btn ghost" id="btExampleCif" title="NaCl rocksalt structure via the .cif loader">Load NaCl .cif example</button>
   </div>
+  <div class="row">
+   <button class="btn" id="btExportCif" title="Write the current structure as a CIF that carries its symmetry operations, ready for the Slater-Koster builder">&#8681; Export CIF</button>
+  </div>
+  <p class="hint" style="margin-top:4px">Export writes a CIF with the cell, atoms, and the <em>current</em> symmetry operations (full / slab / surface as shown), so another tool can read the structure <em>and</em> its symmetry.</p>
   <input type="file" id="fileInput" accept=".in,.pwi,.sh,.txt,.cif,.json,text/*" hidden>
   <details>
    <summary>Paste / edit input deck</summary>
@@ -514,6 +528,10 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
 <main id="view">
  <canvas id="glc"></canvas>
  <canvas id="ovc"></canvas>
+ <div id="ctxMenu" class="ctxmenu hidden">
+  <button class="ctxitem" id="ctxExport3D">&#8681; Export CIF (3-D crystal)</button>
+  <button class="ctxitem" id="ctxExport2D">&#8681; Export CIF (2-D layer)</button>
+ </div>
  <div id="pickHint">&#9679; Click an atom to anchor the slice plane</div>
  <div id="toast"></div>
  <div id="setupBox"><button id="mbSetupInline" class="pbtn">&#9662; 3D view</button></div>
@@ -575,6 +593,9 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
   <span class="onote" id="orbNote"></span>
  </div>
  <canvas id="plc"></canvas>
+ <div id="ctxMenu2" class="ctxmenu hidden">
+  <button class="ctxitem" id="ctxExport2Dp">&#8681; Export CIF (2-D layer)</button>
+ </div>
  <div id="symRow" class="hidden">
   <div id="symHead">
    <span id="symTwist" class="symtwist" title="Expand / collapse the symmetry details">&#9656;</span>
@@ -626,8 +647,8 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
    (focus class honoured only when same-element; fixes Na-anchored Cl menu
    writing Na SALC selections).  f4 manifold change clears every chip of
    that element (the class-keyed successor of the dead legacy key). */
-var CV_VERSION='2.1.0';
-var CV_BUILD='CV-2026-10-22-OR1'
+var CV_VERSION='2.1.2';
+var CV_BUILD='CV-2026-10-24-EX3'
 /* K0: STRUCTURE REVISION.  Monotonic counter bumped by every successful
    loadStructure(); the value is stamped on S.struct.rev and leads the
    symAnalyze() analysis key, so two DIFFERENT structures can never alias
@@ -1700,13 +1721,19 @@ function parseCIF(text, fname){
     var k=atoms[s3].sym;
     if(!seen[k]){ seen[k]=1; species.push({sym:k,mass:null}); }
   }
+  var itNum=tags['_symmetry_Int_Tables_number']||tags['_space_group_IT_number'];
+  var itNumN=(itNum===undefined||itNum===null)?null:parseInt(String(itNum),10);
+  if(!isFinite(itNumN)) itNumN=null;
   return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
           /* keep the operations so the 2D panel can derive the
              site-symmetry group of the anchored atom.  J2 PROVENANCE: these
              flags distinguish DECLARED symmetry (explicit loop, or generated
              from a recognised space-group symbol) from an ASSUMED P1. */
           symops:ops,
-          symopsAssumed:opsAssumed, symopsDeclared:opsDeclared};
+          symopsAssumed:opsAssumed, symopsDeclared:opsDeclared,
+          /* EX1: keep the space-group identity so the CIF exporter can write it
+             back out faithfully (round-trip). */
+          hmSymbol:hm||null, itNumber:itNumN};
 }
 
 /* ---- Materials Project / pymatgen-style JSON ---- */
@@ -1760,7 +1787,8 @@ function parseMPJSON(text, fname){
   notes.push('JSON structure carries no symmetry operations; site-group analysis assumes P1 - irrep / symmetry-adapted orbital results are not meaningful.');
   return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
           symops:null,
-          symopsAssumed:true, symopsDeclared:false};   /* J2: MP JSON decks carry no symmetry - P1 assumed */
+          symopsAssumed:true, symopsDeclared:false,
+          hmSymbol:null, itNumber:null};   /* J2: MP JSON decks carry no symmetry - P1 assumed */
 }
 /* element for an MP-style site: species is {'El(+n)': occ} or [{element|Element}] or label */
 function mpSiteElement(site){
@@ -1936,7 +1964,8 @@ function parseQE(text){
   if(nat!==null && atoms.length!==nat) notes.push('Parsed '+atoms.length+' atoms but the namelist declares nat='+nat+'.');
   notes.push('pw.x deck carries no symmetry operations; site-group analysis assumes P1 - irrep / symmetry-adapted orbital results are not meaningful.');
   return {cell:cell, species:species, atoms:atoms, notes:notes, nat:nat, symops:null,
-          symopsAssumed:true, symopsDeclared:false};   /* J2: pw.x decks carry no symmetry - P1 assumed */
+          symopsAssumed:true, symopsDeclared:false,
+          hmSymbol:null, itNumber:null};   /* J2: pw.x decks carry no symmetry - P1 assumed */
 }
 
 /* Default of the "Atom size" slider (S.scale).  Kept as a named constant so
@@ -8975,6 +9004,342 @@ function glInit(){
   planeBuf.count.outline=planeBuf.count.grid=planeBuf.count.normal=planeBuf.count.fill=0;
   return true;
 }
+
+/* ===========================================================================
+   EX1: Export CIF (structure + symmetry).
+   Global so it works even when the WebGL renderer fails to initialise.
+   Writes cell + atoms + the CURRENT symmetry operations (respecting S.symMode),
+   with all conventions stated in the file so a reader is never in doubt.
+   =========================================================================== */
+function fracToStr(x){ var v=x-Math.floor(x); if(v<0)v+=1; if(v>1-1e-9)v=0; return (Math.round(v*1e6)/1e6).toString(); }
+function cifGCD(x,y){x=Math.abs(x);y=Math.abs(y);while(y){var z=x%y;x=y;y=z;}return x||1;}
+function symOpToXYZ(op){
+  var M=op.M, t=op.c||[0,0,0], names=['x','y','z'], res=[];
+  for(var r=0;r<3;r++){
+    var parts=[];
+    for(var k=0;k<3;k++){
+      var m=Math.round(M[r][k]);
+      if(m===0) continue;
+      parts.push((m===1?'+':'-')+names[k]);
+    }
+    var tr=Math.round((t[r]||0)*12)/12;   /* snap to twelfths */
+    if(tr!==0){
+      var fr=Math.abs(tr), s=tr<0?'-':'+';
+      var num=Math.round(fr*12), den=12, g=cifGCD(num,den); num/=g; den/=g;
+      parts.push(s+((den===1)?(''+num):(num+'/'+den)));
+    }
+    var str=parts.join('');
+    if(str.charAt(0)==='+') str=str.slice(1);
+    if(str==='') str='0';
+    res.push(str);
+  }
+  return res.join(', ');
+}
+function buildExportCIF(){
+  if(typeof S==='undefined' || !S.struct) return null;
+  var st=S.struct;
+  var a=st.cell[0], b=st.cell[1], c=st.cell[2];
+  var A=Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]);
+  var B=Math.sqrt(b[0]*b[0]+b[1]*b[1]+b[2]*b[2]);
+  var C=Math.sqrt(c[0]*c[0]+c[1]*c[1]+c[2]*c[2]);
+  var dot=function(u,v){return u[0]*v[0]+u[1]*v[1]+u[2]*v[2];};
+  var ang=function(u,v){var d=dot(u,v)/(Math.sqrt(dot(u,u))*Math.sqrt(dot(v,v)));d=Math.max(-1,Math.min(1,d));return Math.acos(d)*180/Math.PI;};
+  var al=ang(b,c), be=ang(a,c), ga=ang(a,b);
+  var mode=(typeof S.symMode==='string')?S.symMode:'slab';
+  var ops=(st.symops && st.symops.length)? st.symops : [{M:[[1,0,0],[0,1,0],[0,0,1]],c:[0,0,0]}];
+  var lines=[];
+  lines.push('data_exported_structure');
+  lines.push('# Exported by Generic Crystal Viewer '+(typeof CV_VERSION!=='undefined'?('v'+CV_VERSION):'')+'  build '+(typeof CV_BUILD!=='undefined'?CV_BUILD:'')+'.');
+  lines.push('#');
+  lines.push('# This CIF carries the structure AND its symmetry operations, so a');
+  lines.push('# Slater-Koster / tight-binding builder can read both.  Conventions:');
+  lines.push('#   - cell lengths/angles define the lattice (a along x, b in the xy-plane)');
+  lines.push('#   - fractional coordinates are given for the FULL cell (all atoms expanded)');
+  lines.push('#   - the symmetry-operation list below is the '+mode.toUpperCase()+' set currently in use');
+  lines.push('#     (full = 3-D space group; slab = operations that keep the layer;');
+  lines.push('#      surface = operations that fix the surface normal)');
+  lines.push('#   - provenance: '+(st.symopsAssumed?'ASSUMED P1 (no symmetry was declared)':'DECLARED / generated symmetry'));
+  lines.push('');
+  lines.push('_cell_length_a    '+A.toFixed(6));
+  lines.push('_cell_length_b    '+B.toFixed(6));
+  lines.push('_cell_length_c    '+C.toFixed(6));
+  lines.push('_cell_angle_alpha '+al.toFixed(6));
+  lines.push('_cell_angle_beta  '+be.toFixed(6));
+  lines.push('_cell_angle_gamma '+ga.toFixed(6));
+  if(st.hmSymbol) lines.push("_space_group_name_H-M_alt     '"+st.hmSymbol+"'");
+  if(st.itNumber) lines.push('_symmetry_Int_Tables_number   '+st.itNumber);
+  lines.push("_symmetry_space_group_name_H-M  '"+(st.hmSymbol||'P 1')+"'");
+  lines.push('');
+  lines.push('loop_');
+  lines.push('_space_group_symop_id');
+  lines.push('_space_group_symop_operation_xyz');
+  for(var oi=0;oi<ops.length;oi++) lines.push((oi+1)+" '"+symOpToXYZ(ops[oi])+"'");
+  lines.push('');
+  lines.push('loop_');
+  lines.push('_atom_site_label');
+  lines.push('_atom_site_type_symbol');
+  lines.push('_atom_site_fract_x');
+  lines.push('_atom_site_fract_y');
+  lines.push('_atom_site_fract_z');
+  lines.push('_atom_site_occupancy');
+  for(var ai=0;ai<st.atoms.length;ai++){
+    var at=st.atoms[ai];
+    var lbl=(at.label||at.sym)+(ai+1);
+    lines.push(lbl+' '+at.sym+' '+fracToStr(at.f[0])+' '+fracToStr(at.f[1])+' '+fracToStr(at.f[2])+' 1.0');
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+function exportCIF(){
+  var text=buildExportCIF();
+  if(!text){ alert('Load a structure first.'); return; }
+  var blob=new Blob([text],{type:'chemical/x-cif'});
+  var url=URL.createObjectURL(blob);
+  var aEl=document.createElement('a');
+  aEl.href=url;
+  aEl.download='crystalviewer_export.cif';
+  document.body.appendChild(aEl); aEl.click(); document.body.removeChild(aEl);
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+window.exportCIF=exportCIF;
+window.buildExportCIF=buildExportCIF;
+
+/* ===========================================================================
+   EX2: Export CIF (2-D layer)
+   ---------------------------------------------------------------------------
+   Writes the plane currently shown in the 2-D panel as a 2-D crystal:
+     - cell: a = |a1|, b = |a2|, gamma = angle(a1,a2), c = vacuum (20 A),
+       with the plane normal as the c axis.  The in-plane vectors are placed
+       in the standard orientation a1 = (a,0,0) and a2 = (b cos gamma,
+       b sin gamma, 0), i.e. a1 along +x and a2 in the x-y plane, so the
+       lengths+angles cell and the explicit _2d_cell_a1/a2 vectors agree;
+     - atoms: the atoms selected by the plane thickness, PROJECTED onto the
+       plane (all at the same height, z = 0);
+     - the 2-D symmetry operations (the plane-adapted subgroup), embedded in 3-D;
+     - explicit 2-D metadata tags (_2d_plane_group, _2d_lattice, _2d_normal_hkl,
+       _2d_cell_a1, _2d_cell_a2) so the reader trusts them instead of
+       re-inferring the symmetry from geometry.
+   =========================================================================== */
+function buildExportCIF2D(){
+  if(typeof S==='undefined' || !S.struct) return null;
+  if(typeof PLANE==='undefined' || !PLANE || !PLANE.on) return null;
+  var st=S.struct;
+  var nb=netBasis2D();
+  if(!nb || !nb[0] || !nb[1]) return null;
+  var u=PLANE.u, v=PLANE.v, n=PLANE.n;
+  var to3=function(p){ return [p[0]*u[0]+p[1]*v[0], p[0]*u[1]+p[1]*v[1], p[0]*u[2]+p[1]*v[2]]; };
+  var A1=to3(nb[0]), A2=to3(nb[1]);
+  var aLen=Math.hypot(A1[0],A1[1],A1[2]), bLen=Math.hypot(A2[0],A2[1],A2[2]);
+  var cosg=(A1[0]*A2[0]+A1[1]*A2[1]+A1[2]*A2[2])/(aLen*bLen);
+  var gamma=Math.acos(Math.max(-1,Math.min(1,cosg)))*180/Math.PI;
+  var VAC=20;   /* vacuum thickness along the normal */
+  // plane group from the 2-D net
+  var pgName='', pgOrder=0;
+  try{ var ops2=PG_planeGroup(nb[0],nb[1]); var info=PG_planeGroupName(ops2); pgName=info.name; pgOrder=info.order; }catch(e){}
+  // 2-D Bravais lattice name
+  var near=function(x,y,t){return Math.abs(x-y)<(t||0.02*Math.max(x,y));};
+  var r90=near(gamma,90,0.5), r120=near(gamma,120,0.5);
+  var lattice2d = near(aLen,bLen)? (r90?'square':(r120?'hexagonal':'centred rectangular')) : (r90?'rectangular':'oblique');
+  // atoms in the plane, projected (z=0), fractional in the (A1,A2) basis
+  var pts=(PLANE.pts||[]);
+  var rows=[];
+  for(var i=0;i<pts.length;i++){
+    var p=pts[i];
+    // p.x,p.y are the in-plane coords in the (u,v) frame; convert to the
+    // (A1,A2) fractional basis by solving the 2x2 system.
+    var px=p.x, py=p.y;
+    // A1,A2 expressed in (u,v) are nb[0], nb[1]
+    var det=nb[0][0]*nb[1][1]-nb[0][1]*nb[1][0];
+    if(Math.abs(det)<1e-12) continue;
+    var fa=(px*nb[1][1]-py*nb[1][0])/det;
+    var fb=(nb[0][0]*py-nb[0][1]*px)/det;
+    fa=fa-Math.floor(fa); fb=fb-Math.floor(fb);
+    if(fa>1-1e-6)fa=0; if(fb>1-1e-6)fb=0;
+    rows.push({el:p.el, label:p.cls||p.el, fa:fa, fb:fb});
+  }
+  // de-duplicate projected atoms (multiple layers project onto the same site)
+  var seen={}, uniq=[];
+  for(var r=0;r<rows.length;r++){
+    var key=rows[r].el+'|'+rows[r].fa.toFixed(4)+'|'+rows[r].fb.toFixed(4);
+    if(seen[key]) continue;
+    seen[key]=1; uniq.push(rows[r]);
+  }
+  // assemble the CIF
+  var lines=[];
+  lines.push('data_exported_layer_2d');
+  lines.push('# Exported by Generic Crystal Viewer '+(typeof CV_VERSION!=='undefined'?('v'+CV_VERSION):'')+'  build '+(typeof CV_BUILD!=='undefined'?CV_BUILD:'')+'.');
+  lines.push('#');
+  lines.push('# 2-D LAYER export from the plane panel.');
+  lines.push('# The structure shown on the (hkl) plane is written as a 2-D crystal:');
+  lines.push('#   - cell a,b are the in-plane repeat vectors a1,a2; gamma is their angle;');
+  lines.push('#     c is a vacuum spacer ('+VAC+' A) along the plane normal.');
+  lines.push('#   - atoms are those selected by the plane thickness ('+PLANE.thick.toFixed(2)+' A),');
+  lines.push('#     PROJECTED onto the plane (all at the same height, z = 0).');
+  lines.push('#   - the symmetry operations are the 2-D (plane) group embedded in 3-D.');
+  lines.push('#   - _2d_* tags give the plane group, lattice, normal and in-plane cell.');
+  lines.push('');
+  // Standard 2-D cell convention: a1 along +x, a2 in the x-y plane at angle
+  // gamma to a1, and the plane normal along +z (the vacuum axis).  This makes
+  // the lengths+angles cell and the explicit _2d_cell_a1/a2 vectors agree, so
+  // any reader (not just one that knows the _2d_* tags) sees a face-on 2-D
+  // crystal with the normal along c.
+  var gc=Math.cos(gamma*Math.PI/180), gs=Math.sin(gamma*Math.PI/180);
+  var A1xy=[aLen, 0, 0];
+  var A2xy=[bLen*gc, bLen*gs, 0];
+  lines.push('_cell_length_a    '+aLen.toFixed(6));
+  lines.push('_cell_length_b    '+bLen.toFixed(6));
+  lines.push('_cell_length_c    '+VAC.toFixed(6));
+  lines.push('_cell_angle_alpha 90.000000');
+  lines.push('_cell_angle_beta  90.000000');
+  lines.push('_cell_angle_gamma '+gamma.toFixed(6));
+  lines.push("_space_group_name_H-M_alt     '"+pgName+"'");
+  lines.push('');
+  // 2-D metadata tags (custom but clearly named)
+  lines.push('# --- 2-D metadata (Slater-Koster builder reads these) ---');
+  lines.push('_2d_plane_group   '+pgName);
+  lines.push('_2d_plane_group_order '+pgOrder);
+  lines.push('_2d_lattice       '+lattice2d);
+  lines.push('_2d_normal_hkl    '+(PLANE.h||0)+' '+(PLANE.k||0)+' '+(PLANE.l||0));
+  lines.push('_2d_cell_a1       '+A1xy.map(function(x){return x.toFixed(6);}).join(' '));
+  lines.push('_2d_cell_a2       '+A2xy.map(function(x){return x.toFixed(6);}).join(' '));
+  lines.push('_2d_thickness     '+PLANE.thick.toFixed(3));
+  lines.push('');
+  // FULL 2-D symmetry operations, including glide reflections and screw-like
+  // in-plane translations.  We derive them from the projected atom set: for
+  // every candidate 2-D operation (a point operation from the lattice's plane
+  // group, combined with an in-plane fractional translation), we keep it if it
+  // maps the projected atom set onto itself (mod 1).  This captures the
+  // non-symmorphic elements (glides) that PG_planeGroup alone does not give.
+  //
+  // A 2-D operation is written as  (x,y) -> M.(x,y) + t  with M a 2x2 integer
+  // matrix (det +-1) and t a rational in-plane translation in the (a1,a2)
+  // basis.  We emit them as CIF xyz strings in the (a,b) fractional frame
+  // with z untouched (identity in the normal axis).
+  function gcd2(a,b){a=Math.abs(a);b=Math.abs(b);while(b){var t=a%b;a=b;b=t;}return a||1;}
+  /* Build the full 2-D symmetry operations by PROJECTING the plane-preserving
+     3-D space-group operations into the 2-D (a1,a2) basis.  This is the
+     authoritative source: the operations come from the crystal's space group,
+     not from the atom decoration, so glides and centring are correct.
+     For each op {M,c}: keep it if it preserves the plane (M.n = +/- n); the
+     in-plane 2x2 block and the in-plane part of c (expressed in (a1,a2)) give
+     the 2-D operation (x,y) -> M2.(x,y) + t2.  Operations that differ only by
+     a lattice translation of the 2-D cell are merged. */
+  var ops2D=[];
+  (function(){
+    var symops=(S && S.struct && S.struct.symops) ? S.struct.symops : null;
+    if(!symops || !symops.length) return;
+    // 2-D basis (in-plane) expressed as CARTESIAN vectors a1,a2 (A1,A2 already
+    // computed above), plus the normal n.  Solve for the (a1,a2) coefficients
+    // of a cartesian vector by the 2x2 Gram system.
+    var g11=A1[0]*A1[0]+A1[1]*A1[1]+A1[2]*A1[2];
+    var g22=A2[0]*A2[0]+A2[1]*A2[1]+A2[2]*A2[2];
+    var g12=A1[0]*A2[0]+A1[1]*A2[1]+A1[2]*A2[2];
+    var detG=g11*g22-g12*g12;
+    if(Math.abs(detG)<1e-12) return;
+    function coeffs(v){  // cartesian -> (a1,a2) coefficients
+      var b1=v[0]*A1[0]+v[1]*A1[1]+v[2]*A1[2];
+      var b2=v[0]*A2[0]+v[1]*A2[1]+v[2]*A2[2];
+      return [ (b1*g22-b2*g12)/detG, (b2*g11-b1*g12)/detG ];
+    }
+    var nrm=PLANE.n;
+    var nn=Math.sqrt(nrm[0]*nrm[0]+nrm[1]*nrm[1]+nrm[2]*nrm[2])||1;
+    var nh=[nrm[0]/nn,nrm[1]/nn,nrm[2]/nn];
+    var seen={};
+    for(var si=0;si<symops.length;si++){
+      var op=symops[si], M=op.M, cc=op.c||[0,0,0];
+      // does M preserve the plane?  M.n must be +/- n
+      var Mn=[M[0][0]*nh[0]+M[0][1]*nh[1]+M[0][2]*nh[2],
+              M[1][0]*nh[0]+M[1][1]*nh[1]+M[1][2]*nh[2],
+              M[2][0]*nh[0]+M[2][1]*nh[1]+M[2][2]*nh[2]];
+      var dot=Mn[0]*nh[0]+Mn[1]*nh[1]+Mn[2]*nh[2];
+      if(Math.abs(Math.abs(dot)-1)>1e-6) continue;   // not a plane op
+      // in-plane part: apply M to the 3-D cartesian images of the 2-D basis
+      // vectors, then read off the (a1,a2) coefficients.
+      function applyM(v){return [M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],
+                                M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],
+                                M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2]];}
+      var MA1=applyM(A1), MA2=applyM(A2);
+      var cA1=coeffs(MA1), cA2=coeffs(MA2);
+      // integer 2x2 matrix: columns are the images of a1,a2 in the (a1,a2) basis
+      var M2=[[Math.round(cA1[0]),Math.round(cA2[0])],[Math.round(cA1[1]),Math.round(cA2[1])]];
+      if(Math.abs(cA1[0]-M2[0][0])>1e-3||Math.abs(cA1[1]-M2[1][0])>1e-3||
+         Math.abs(cA2[0]-M2[0][1])>1e-3||Math.abs(cA2[1]-M2[1][1])>1e-3) continue;
+      // translation: the in-plane part of c, but c is in the 3-D CELL fractional
+      // frame; convert to cartesian, then to (a1,a2) coefficients.
+      var cCart=[cc[0]*S.struct.cell[0][0]+cc[1]*S.struct.cell[1][0]+cc[2]*S.struct.cell[2][0],
+                 cc[0]*S.struct.cell[0][1]+cc[1]*S.struct.cell[1][1]+cc[2]*S.struct.cell[2][1],
+                 cc[0]*S.struct.cell[0][2]+cc[1]*S.struct.cell[1][2]+cc[2]*S.struct.cell[2][2]];
+      // project cCart onto the in-plane basis
+      var cAB=coeffs(cCart);
+      var t=[((cAB[0]%1)+1)%1, ((cAB[1]%1)+1)%1];
+      var key=[M2[0][0],M2[0][1],M2[1][0],M2[1][1],Math.round(t[0]*1000),Math.round(t[1]*1000)].join(',');
+      if(seen[key]) continue;
+      seen[key]=true;
+      ops2D.push({M:M2,t:t});
+    }
+  })();
+  if(!ops2D.length){
+    // fallback: point operations only (no translations)
+    var pop=[]; try{ pop=PG_planeGroup(nb[0],nb[1]); }catch(e){ pop=[[[1,0],[0,1]]]; }
+    if(!pop.length) pop=[[[1,0],[0,1]]];
+    for(var qi=0;qi<pop.length;qi++) ops2D.push({M:pop[qi],t:[0,0]});
+  }
+  // render an integer coefficient times a variable
+  function coefTerm(v,varName){
+    var n=Math.round(v);
+    if(n===0) return '';
+    return (n>0?'+':'-')+((Math.abs(n)===1?'':Math.abs(n))+varName);
+  }
+  // render a rational translation as a CIF fraction string (e.g. 1/2)
+  function fracTerm(v){
+    var x=((v%1)+1)%1;
+    if(x<1e-9) return '';
+    // snap to a small-denominator fraction
+    var den=12, num=Math.round(x*den), g=gcd2(num,den); num/=g; den/=g;
+    if(den===1) return (num>0?'+':'-')+num;
+    return (num>0?'+':'-')+num+'/'+den;
+  }
+  lines.push('loop_');
+  lines.push('_space_group_symop_id');
+  lines.push('_space_group_symop_operation_xyz');
+  for(var oi=0;oi<ops2D.length;oi++){
+    var Mo=ops2D[oi].M, to=ops2D[oi].t;
+    var xstr=(coefTerm(Mo[0][0],'x')+coefTerm(Mo[0][1],'y')+fracTerm(to[0]))||'0';
+    var ystr=(coefTerm(Mo[1][0],'x')+coefTerm(Mo[1][1],'y')+fracTerm(to[1]))||'0';
+    if(xstr[0]==='+')xstr=xstr.slice(1);
+    if(ystr[0]==='+')ystr=ystr.slice(1);
+    lines.push((oi+1)+" '"+xstr+', '+ystr+', z\'');
+  }
+  lines.push('');
+  // atoms (projected)
+  lines.push('loop_');
+  lines.push('_atom_site_label');
+  lines.push('_atom_site_type_symbol');
+  lines.push('_atom_site_fract_x');
+  lines.push('_atom_site_fract_y');
+  lines.push('_atom_site_fract_z');
+  lines.push('_atom_site_occupancy');
+  for(var ai=0;ai<uniq.length;ai++){
+    var at=uniq[ai];
+    lines.push((at.el+(ai+1))+' '+at.el+' '+fracToStr(at.fa)+' '+fracToStr(at.fb)+' 0 1.0');
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+function exportCIF2D(){
+  var text=buildExportCIF2D();
+  if(!text){ alert('Set a plane in the 2-D panel first.'); return; }
+  var blob=new Blob([text],{type:'chemical/x-cif'});
+  var url=URL.createObjectURL(blob);
+  var aEl=document.createElement('a');
+  aEl.href=url;
+  aEl.download='crystalviewer_layer_2d.cif';
+  document.body.appendChild(aEl); aEl.click(); document.body.removeChild(aEl);
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+window.buildExportCIF2D=buildExportCIF2D;
+window.exportCIF2D=exportCIF2D;
+
 function initUI(){
   var view=$('view');
   glc=$('glc');
@@ -9129,6 +9494,56 @@ function initUI(){
   });
 
   /* --- controls --- */
+  /* ---- EX1: Export CIF (structure + symmetry) ----
+     exportCIF() is defined at global scope (see below) so it works even if
+     the WebGL UI fails to initialise. */
+  var btExp=$('btExportCif');
+  if(btExp) btExp.addEventListener('click',function(){ exportCIF(); });
+
+  /* ---- EX2: right-click context menus (3-D panel and 2-D plane panel) ---- */
+  function hideCtx(){ var m1=$('ctxMenu'),m2=$('ctxMenu2'); if(m1)m1.classList.add('hidden'); if(m2)m2.classList.add('hidden'); }
+  function showCtx(menu,x,y){
+    hideCtx();
+    menu.classList.remove('hidden');
+    // keep on screen
+    var w=menu.offsetWidth||220, h=menu.offsetHeight||80;
+    menu.style.left=Math.min(x,window.innerWidth-w-6)+'px';
+    menu.style.top=Math.min(y,window.innerHeight-h-6)+'px';
+  }
+  /* NOTE: assign the GLOBAL glc/plc here, not `var glc=...`.  A `var`
+     declaration inside initUI hoists a function-scoped binding that shadows
+     the globals, so the earlier `glc=$('glc')` at the top of initUI would
+     write the local, leaving the global glc null when glInit() runs ->
+     "WebGL is not available". */
+  glc=$('glc');
+  if(glc) glc.addEventListener('contextmenu',function(e){
+    e.preventDefault();
+    var m=$('ctxMenu');
+    // enable the 2-D item only when a plane is active
+    var twoD=$('ctxExport2D');
+    if(twoD){ var ok2d=!!(typeof PLANE!=='undefined'&&PLANE&&PLANE.on); twoD.disabled=!ok2d; }
+    showCtx(m,e.clientX,e.clientY);
+  });
+  plc=$('plc');
+  if(plc) plc.addEventListener('contextmenu',function(e){
+    e.preventDefault();
+    showCtx($('ctxMenu2'),e.clientX,e.clientY);
+  });
+  var c3=$('ctxExport3D'); if(c3) c3.addEventListener('click',function(){ hideCtx(); exportCIF(); });
+  var c2=$('ctxExport2D'); if(c2) c2.addEventListener('click',function(){ hideCtx(); exportCIF2D(); });
+  var c2p=$('ctxExport2Dp'); if(c2p) c2p.addEventListener('click',function(){ hideCtx(); exportCIF2D(); });
+  window.addEventListener('click',function(e){
+    var m1=$('ctxMenu'),m2=$('ctxMenu2');
+    if(m1&&m1.contains(e.target))return;
+    if(m2&&m2.contains(e.target))return;
+    hideCtx();
+  });
+  window.addEventListener('keydown',function(e){ if(e.key==='Escape') hideCtx(); });
+
+  $('btOpen').addEventListener('click',function(){ $('fileInput').click(); });
+  /* (exportCIF is defined at global scope, below) */
+
+
   $('btOpen').addEventListener('click',function(){ $('fileInput').click(); });
   $('fileInput').addEventListener('change',function(e){
     loadFile(e.target.files[0]);
