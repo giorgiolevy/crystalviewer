@@ -3,7 +3,7 @@
   Generic Crystal Viewer
    ----------------------
 
-  Version: 2.1.2
+  Version: 2.1.0
   Build:   CV-2026-10-24-EX3     (EX3 = 2-D layer export in the standard
                                   a1=+x / a2 in xy / normal=+z orientation)
 
@@ -301,6 +301,8 @@ details summary:hover{color:var(--accent)}
 .ctxitem:hover{background:var(--btn-hover)}
 .ctxitem:disabled{color:var(--fg3);cursor:default;opacity:.55}
 .ctxitem:disabled:hover{background:transparent}
+/* thin rule between the "save image" group and the "export CIF" group */
+.ctxitem.ctxsep{margin-top:4px;border-top:1px solid var(--line);border-radius:0 0 6px 6px;padding-top:9px}
 /* floating button stack, top-left of the 3D view: the three buttons flow
    in a column gap so the conditional "clear plane" collapses gracefully */
 #viewBtns{
@@ -529,7 +531,9 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
  <canvas id="glc"></canvas>
  <canvas id="ovc"></canvas>
  <div id="ctxMenu" class="ctxmenu hidden">
-  <button class="ctxitem" id="ctxExport3D">&#8681; Export CIF (3-D crystal)</button>
+  <button class="ctxitem" id="ctxSave3D">&#128247; Save image (3-D view)</button>
+  <button class="ctxitem" id="ctxSave2D">&#128247; Save image (2-D layer)</button>
+  <button class="ctxitem ctxsep" id="ctxExport3D">&#8681; Export CIF (3-D crystal)</button>
   <button class="ctxitem" id="ctxExport2D">&#8681; Export CIF (2-D layer)</button>
  </div>
  <div id="pickHint">&#9679; Click an atom to anchor the slice plane</div>
@@ -594,7 +598,8 @@ details.symsec-empty>summary{filter:grayscale(0.6)}
  </div>
  <canvas id="plc"></canvas>
  <div id="ctxMenu2" class="ctxmenu hidden">
-  <button class="ctxitem" id="ctxExport2Dp">&#8681; Export CIF (2-D layer)</button>
+  <button class="ctxitem" id="ctxSave2Dp">&#128247; Save image (2-D layer)</button>
+  <button class="ctxitem ctxsep" id="ctxExport2Dp">&#8681; Export CIF (2-D layer)</button>
  </div>
  <div id="symRow" class="hidden">
   <div id="symHead">
@@ -1697,7 +1702,16 @@ function parseCIF(text, fname){
       notes.push('Site '+rel['_atom_site_label']+' (occ '+occ+') below 0.5: skipped.');
       continue;
     }
-    sites.push({sym:sym, f:[fx,fy,fz], label:(col['_atom_site_label']!==undefined)?rel['_atom_site_label']:null});
+    /* Wyckoff letter / multiplicity: kept when the CIF supplies them, so the
+       editor can show the conventional Wyckoff label.  Both are optional. */
+    var wyck=(col['_atom_site_Wyckoff_symbol']!==undefined)?rel['_atom_site_Wyckoff_symbol']:null;
+    var mult=null;
+    if(col['_atom_site_symmetry_multiplicity']!==undefined){
+      var mv=cifNum(rel['_atom_site_symmetry_multiplicity']);
+      if(mv!==null) mult=mv;
+    }
+    sites.push({sym:sym, f:[fx,fy,fz], label:(col['_atom_site_label']!==undefined)?rel['_atom_site_label']:null,
+                wyckoff:wyck, multiplicity:mult});
   }
   if(sites.length===0) throw new Error('CIF: no usable atom sites.');
 
@@ -1725,6 +1739,11 @@ function parseCIF(text, fname){
   var itNumN=(itNum===undefined||itNum===null)?null:parseInt(String(itNum),10);
   if(!isFinite(itNumN)) itNumN=null;
   return {cell:L, species:species, atoms:atoms, notes:notes, nat:atoms.length,
+          /* ASYMMETRIC UNIT: the unique sites the file actually listed, before
+             symmetry expansion.  The editor edits THESE (one row per Wyckoff
+             position) and re-expands through symops.  Each entry keeps the
+             optional Wyckoff letter and multiplicity from the CIF. */
+          sites:sites,
           /* keep the operations so the 2D panel can derive the
              site-symmetry group of the anchored atom.  J2 PROVENANCE: these
              flags distinguish DECLARED symmetry (explicit loop, or generated
@@ -4009,7 +4028,18 @@ function frame(){
   var f=1/Math.tan(cam.fov/2);
   drawLabels(f);
   if(PLANE.on && PLANE.anchor && plane2dDirty && panel2dVisible() && ++planeFrameTick % 3 === 0) renderPlane2D();
+  /* A pending "save the 3-D view as an image" request is serviced HERE, at the
+     very end of the frame that just drew everything.  This is the only reliable
+     place: the context is created without preserveDrawingBuffer (for speed), so
+     the colour buffer is discarded as soon as the frame is composited and
+     toDataURL() anywhere else returns a blank image. */
+  if(pendingGLSnapshot){
+    var cb=pendingGLSnapshot; pendingGLSnapshot=null;
+    try{ cb(glc.toDataURL('image/png')); }catch(e){ cb(null); }
+  }
 }
+/* Set by saveCanvasImage('3d') to capture the next completed frame. */
+var pendingGLSnapshot=null;
 var planeFrameTick=0;
 var ps=null;
 
@@ -9102,6 +9132,75 @@ function exportCIF(){
   setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
 window.exportCIF=exportCIF;
+
+/* ===========================================================================
+   SAVE CANVAS AS IMAGE  (right-click menu: "Save image (3-D)" / "(2-D)")
+   ---------------------------------------------------------------------------
+   Saves what is on screen as a PNG, so a picture of the view can be pasted
+   into a slide or a paper without re-rendering it elsewhere.
+
+   The two panels are drawn by different technologies and need different care:
+
+   - The 2-D plane panel (`plc`) is a normal 2-D canvas.  Its pixels persist, so
+     toDataURL() works at any time.
+
+   - The 3-D view (`glc`) is WebGL, created WITHOUT preserveDrawingBuffer (that
+     flag costs performance on every frame).  Without it the colour buffer is
+     discarded once the frame is composited, so toDataURL() called from a click
+     handler returns a BLANK image.  The capture therefore has to happen inside
+     frame(), right after the draw calls: saveCanvasImage('3d') sets
+     pendingGLSnapshot and marks the view dirty, frame() finishes its draw and
+     then hands back the data URL.  Verified: a click-handler capture gave 0
+     non-blank pixels; the in-frame capture gives the real image.
+   =========================================================================== */
+function saveCanvasImage(which){
+  if(which==='2d'){
+    var plc=$('plc');
+    if(!plc){ toast('No 2-D panel to save.'); return; }
+    var url2;
+    try{ url2=flattenCanvasOnBackground(plc); }catch(e){ toast('Could not read the 2-D canvas.'); return; }
+    if(!url2){ toast('Could not read the 2-D canvas.'); return; }
+    downloadDataUrl(url2,'crystalviewer_2d_layer.png');
+    toast('Saved the 2-D layer as a PNG.');
+    return;
+  }
+  /* 3-D: capture inside the next completed frame (see the note above). */
+  if(!glc || !gl){ toast('The 3-D view is not available.'); return; }
+  pendingGLSnapshot=function(url){
+    if(!url){ toast('Could not read the 3-D canvas.'); return; }
+    downloadDataUrl(url,'crystalviewer_3d_view.png');
+    toast('Saved the 3-D view as a PNG.');
+  };
+  /* make sure frame() actually draws: it early-returns when nothing changed */
+  if(typeof markDirty==='function') markDirty(); else needsRedraw=true;
+}
+window.saveCanvasImage=saveCanvasImage;
+
+/* The 2-D panel canvas is TRANSPARENT where the page looks white: the white
+   comes from the panel's CSS background, not from drawn pixels.  Saving the
+   canvas directly therefore yields a PNG with a transparent (looks black in most
+   viewers) background.  Composite it onto the panel's actual background colour
+   first, so the saved image matches what is on screen. */
+function flattenCanvasOnBackground(canvas){
+  var out=document.createElement('canvas');
+  out.width=canvas.width; out.height=canvas.height;
+  var cx=out.getContext('2d');
+  if(!cx) return canvas.toDataURL('image/png');
+  var bg=getComputedStyle(document.documentElement).getPropertyValue('--panel');
+  cx.fillStyle=(bg&&bg.trim())||'#ffffff';
+  cx.fillRect(0,0,out.width,out.height);
+  cx.drawImage(canvas,0,0);
+  return out.toDataURL('image/png');
+}
+
+/* Trigger a download for a data: URL.  Kept separate so both callers share the
+   same filename/anchor handling as the CIF exporters. */
+function downloadDataUrl(url,filename){
+  var aEl=document.createElement('a');
+  aEl.href=url;
+  aEl.download=filename;
+  document.body.appendChild(aEl); aEl.click(); document.body.removeChild(aEl);
+}
 window.buildExportCIF=buildExportCIF;
 
 /* ===========================================================================
@@ -9109,10 +9208,7 @@ window.buildExportCIF=buildExportCIF;
    ---------------------------------------------------------------------------
    Writes the plane currently shown in the 2-D panel as a 2-D crystal:
      - cell: a = |a1|, b = |a2|, gamma = angle(a1,a2), c = vacuum (20 A),
-       with the plane normal as the c axis.  The in-plane vectors are placed
-       in the standard orientation a1 = (a,0,0) and a2 = (b cos gamma,
-       b sin gamma, 0), i.e. a1 along +x and a2 in the x-y plane, so the
-       lengths+angles cell and the explicit _2d_cell_a1/a2 vectors agree;
+       with the plane normal as the c axis;
      - atoms: the atoms selected by the plane thickness, PROJECTED onto the
        plane (all at the same height, z = 0);
      - the 2-D symmetry operations (the plane-adapted subgroup), embedded in 3-D;
@@ -9204,108 +9300,28 @@ function buildExportCIF2D(){
   lines.push('_2d_cell_a2       '+A2xy.map(function(x){return x.toFixed(6);}).join(' '));
   lines.push('_2d_thickness     '+PLANE.thick.toFixed(3));
   lines.push('');
-  // FULL 2-D symmetry operations, including glide reflections and screw-like
-  // in-plane translations.  We derive them from the projected atom set: for
-  // every candidate 2-D operation (a point operation from the lattice's plane
-  // group, combined with an in-plane fractional translation), we keep it if it
-  // maps the projected atom set onto itself (mod 1).  This captures the
-  // non-symmorphic elements (glides) that PG_planeGroup alone does not give.
-  //
-  // A 2-D operation is written as  (x,y) -> M.(x,y) + t  with M a 2x2 integer
-  // matrix (det +-1) and t a rational in-plane translation in the (a1,a2)
-  // basis.  We emit them as CIF xyz strings in the (a,b) fractional frame
-  // with z untouched (identity in the normal axis).
-  function gcd2(a,b){a=Math.abs(a);b=Math.abs(b);while(b){var t=a%b;a=b;b=t;}return a||1;}
-  /* Build the full 2-D symmetry operations by PROJECTING the plane-preserving
-     3-D space-group operations into the 2-D (a1,a2) basis.  This is the
-     authoritative source: the operations come from the crystal's space group,
-     not from the atom decoration, so glides and centring are correct.
-     For each op {M,c}: keep it if it preserves the plane (M.n = +/- n); the
-     in-plane 2x2 block and the in-plane part of c (expressed in (a1,a2)) give
-     the 2-D operation (x,y) -> M2.(x,y) + t2.  Operations that differ only by
-     a lattice translation of the 2-D cell are merged. */
-  var ops2D=[];
-  (function(){
-    var symops=(S && S.struct && S.struct.symops) ? S.struct.symops : null;
-    if(!symops || !symops.length) return;
-    // 2-D basis (in-plane) expressed as CARTESIAN vectors a1,a2 (A1,A2 already
-    // computed above), plus the normal n.  Solve for the (a1,a2) coefficients
-    // of a cartesian vector by the 2x2 Gram system.
-    var g11=A1[0]*A1[0]+A1[1]*A1[1]+A1[2]*A1[2];
-    var g22=A2[0]*A2[0]+A2[1]*A2[1]+A2[2]*A2[2];
-    var g12=A1[0]*A2[0]+A1[1]*A2[1]+A1[2]*A2[2];
-    var detG=g11*g22-g12*g12;
-    if(Math.abs(detG)<1e-12) return;
-    function coeffs(v){  // cartesian -> (a1,a2) coefficients
-      var b1=v[0]*A1[0]+v[1]*A1[1]+v[2]*A1[2];
-      var b2=v[0]*A2[0]+v[1]*A2[1]+v[2]*A2[2];
-      return [ (b1*g22-b2*g12)/detG, (b2*g11-b1*g12)/detG ];
-    }
-    var nrm=PLANE.n;
-    var nn=Math.sqrt(nrm[0]*nrm[0]+nrm[1]*nrm[1]+nrm[2]*nrm[2])||1;
-    var nh=[nrm[0]/nn,nrm[1]/nn,nrm[2]/nn];
-    var seen={};
-    for(var si=0;si<symops.length;si++){
-      var op=symops[si], M=op.M, cc=op.c||[0,0,0];
-      // does M preserve the plane?  M.n must be +/- n
-      var Mn=[M[0][0]*nh[0]+M[0][1]*nh[1]+M[0][2]*nh[2],
-              M[1][0]*nh[0]+M[1][1]*nh[1]+M[1][2]*nh[2],
-              M[2][0]*nh[0]+M[2][1]*nh[1]+M[2][2]*nh[2]];
-      var dot=Mn[0]*nh[0]+Mn[1]*nh[1]+Mn[2]*nh[2];
-      if(Math.abs(Math.abs(dot)-1)>1e-6) continue;   // not a plane op
-      // in-plane part: apply M to the 3-D cartesian images of the 2-D basis
-      // vectors, then read off the (a1,a2) coefficients.
-      function applyM(v){return [M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],
-                                M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],
-                                M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2]];}
-      var MA1=applyM(A1), MA2=applyM(A2);
-      var cA1=coeffs(MA1), cA2=coeffs(MA2);
-      // integer 2x2 matrix: columns are the images of a1,a2 in the (a1,a2) basis
-      var M2=[[Math.round(cA1[0]),Math.round(cA2[0])],[Math.round(cA1[1]),Math.round(cA2[1])]];
-      if(Math.abs(cA1[0]-M2[0][0])>1e-3||Math.abs(cA1[1]-M2[1][0])>1e-3||
-         Math.abs(cA2[0]-M2[0][1])>1e-3||Math.abs(cA2[1]-M2[1][1])>1e-3) continue;
-      // translation: the in-plane part of c, but c is in the 3-D CELL fractional
-      // frame; convert to cartesian, then to (a1,a2) coefficients.
-      var cCart=[cc[0]*S.struct.cell[0][0]+cc[1]*S.struct.cell[1][0]+cc[2]*S.struct.cell[2][0],
-                 cc[0]*S.struct.cell[0][1]+cc[1]*S.struct.cell[1][1]+cc[2]*S.struct.cell[2][1],
-                 cc[0]*S.struct.cell[0][2]+cc[1]*S.struct.cell[1][2]+cc[2]*S.struct.cell[2][2]];
-      // project cCart onto the in-plane basis
-      var cAB=coeffs(cCart);
-      var t=[((cAB[0]%1)+1)%1, ((cAB[1]%1)+1)%1];
-      var key=[M2[0][0],M2[0][1],M2[1][0],M2[1][1],Math.round(t[0]*1000),Math.round(t[1]*1000)].join(',');
-      if(seen[key]) continue;
-      seen[key]=true;
-      ops2D.push({M:M2,t:t});
-    }
-  })();
-  if(!ops2D.length){
-    // fallback: point operations only (no translations)
-    var pop=[]; try{ pop=PG_planeGroup(nb[0],nb[1]); }catch(e){ pop=[[[1,0],[0,1]]]; }
-    if(!pop.length) pop=[[[1,0],[0,1]]];
-    for(var qi=0;qi<pop.length;qi++) ops2D.push({M:pop[qi],t:[0,0]});
-  }
-  // render an integer coefficient times a variable
-  function coefTerm(v,varName){
-    var n=Math.round(v);
-    if(n===0) return '';
-    return (n>0?'+':'-')+((Math.abs(n)===1?'':Math.abs(n))+varName);
-  }
-  // render a rational translation as a CIF fraction string (e.g. 1/2)
-  function fracTerm(v){
-    var x=((v%1)+1)%1;
-    if(x<1e-9) return '';
-    // snap to a small-denominator fraction
-    var den=12, num=Math.round(x*den), g=gcd2(num,den); num/=g; den/=g;
-    if(den===1) return (num>0?'+':'-')+num;
-    return (num>0?'+':'-')+num+'/'+den;
-  }
+  // 2-D symmetry operations, embedded in 3-D: identity in the normal (c) axis,
+  // the 2-D point operation in the (a,b) block, no translation (origin choice 1).
+  // We write the operations as xyz strings acting on the (a,b) fractional coords.
   lines.push('loop_');
   lines.push('_space_group_symop_id');
   lines.push('_space_group_symop_operation_xyz');
-  for(var oi=0;oi<ops2D.length;oi++){
-    var Mo=ops2D[oi].M, to=ops2D[oi].t;
-    var xstr=(coefTerm(Mo[0][0],'x')+coefTerm(Mo[0][1],'y')+fracTerm(to[0]))||'0';
-    var ystr=(coefTerm(Mo[1][0],'x')+coefTerm(Mo[1][1],'y')+fracTerm(to[1]))||'0';
+  var opsList=[];
+  try{ opsList=PG_planeGroup(nb[0],nb[1]); }catch(e){ opsList=[[[1,0],[0,1]]]; }
+  if(!opsList.length) opsList=[[[1,0],[0,1]]];
+  function fracTerm(val,varName){
+    // render val (an integer) times varName as a CIF term
+    var v=Math.round(val);
+    if(v===0) return '';
+    var s=(v>0?'+':'-');
+    var m=Math.abs(v);
+    return s+((m===1?'':m)+varName);
+  }
+  for(var oi=0;oi<opsList.length;oi++){
+    var M=opsList[oi];
+    // M is [[a,b],[c,d]] acting on (x,y) in the 2-D basis
+    var xstr=(fracTerm(M[0][0],'x')+fracTerm(M[0][1],'y'))||'0';
+    var ystr=(fracTerm(M[1][0],'x')+fracTerm(M[1][1],'y'))||'0';
     if(xstr[0]==='+')xstr=xstr.slice(1);
     if(ystr[0]==='+')ystr=ystr.slice(1);
     lines.push((oi+1)+" '"+xstr+', '+ystr+', z\'');
@@ -9519,9 +9535,12 @@ function initUI(){
   if(glc) glc.addEventListener('contextmenu',function(e){
     e.preventDefault();
     var m=$('ctxMenu');
-    // enable the 2-D item only when a plane is active
+    // enable the 2-D items only when a plane is active
+    var ok2d=!!(typeof PLANE!=='undefined'&&PLANE&&PLANE.on);
     var twoD=$('ctxExport2D');
-    if(twoD){ var ok2d=!!(typeof PLANE!=='undefined'&&PLANE&&PLANE.on); twoD.disabled=!ok2d; }
+    if(twoD) twoD.disabled=!ok2d;
+    var twoDimg=$('ctxSave2D');
+    if(twoDimg) twoDimg.disabled=!ok2d;
     showCtx(m,e.clientX,e.clientY);
   });
   plc=$('plc');
@@ -9532,6 +9551,11 @@ function initUI(){
   var c3=$('ctxExport3D'); if(c3) c3.addEventListener('click',function(){ hideCtx(); exportCIF(); });
   var c2=$('ctxExport2D'); if(c2) c2.addEventListener('click',function(){ hideCtx(); exportCIF2D(); });
   var c2p=$('ctxExport2Dp'); if(c2p) c2p.addEventListener('click',function(){ hideCtx(); exportCIF2D(); });
+  /* Save-as-image items.  The 2-D ones are only meaningful when the plane panel
+     is showing, so they are disabled alongside the 2-D CIF export. */
+  var s3=$('ctxSave3D'); if(s3) s3.addEventListener('click',function(){ hideCtx(); saveCanvasImage('3d'); });
+  var s2=$('ctxSave2D'); if(s2) s2.addEventListener('click',function(){ hideCtx(); saveCanvasImage('2d'); });
+  var s2p=$('ctxSave2Dp'); if(s2p) s2p.addEventListener('click',function(){ hideCtx(); saveCanvasImage('2d'); });
   window.addEventListener('click',function(e){
     var m1=$('ctxMenu'),m2=$('ctxMenu2');
     if(m1&&m1.contains(e.target))return;
